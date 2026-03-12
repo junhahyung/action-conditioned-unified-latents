@@ -1,0 +1,119 @@
+\documentclass{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{bm}
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+
+\newcommand{\vo}{\bm{o}}
+\newcommand{\vz}{\bm{z}}
+\newcommand{\va}{\bm{a}}
+\newcommand{\loss}{\mathcal{L}}
+\newcommand{\E}{\mathbb{E}}
+
+\title{Explanation: Why the AC-UL Prior Forces Physics-Grounded Encoding}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Setup}
+
+The encoder maps observation $\vo_{t+1}$ to latent $\vz_{t+1,\text{clean}}$.
+The dynamics prior must predict this latent \emph{and} the current action from the history:
+\[
+  \mathcal{H}_t^z = (\vz_{t-H+1,\text{clean}},\; \va_{t-H},\; \vz_{t-H+2,\text{clean}},\; \va_{t-H+1},\; \ldots,\; \vz_{t,\text{clean}}).
+\]
+
+The joint prior loss is:
+\begin{equation}
+  \loss_z^{\text{joint}} = \underbrace{\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta(\vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2}_{\text{latent MSE}} + \gamma \cdot \underbrace{\|\va_t - \hat{\va}_\theta(\vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2}_{\text{action MSE}}.
+  \label{eq:joint_prior}
+\end{equation}
+
+(The diffusion weighting $-\frac{d\lambda_z(\tau)}{d\tau}\frac{\exp\lambda_z(\tau)}{2}$ is omitted for clarity; it only rescales the latent MSE across noise levels.)
+
+\section{Two Types of Information}
+
+Consider what the encoder could put into $\vz_{t+1,\text{clean}}$.
+There are two kinds of information:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Predictable content} (e.g., gripper moved 5cm right because $\va_t$ commanded it, block shifted because the gripper pushed it):
+  The prior \emph{can} predict this from the history $\mathcal{H}_t^z$, so the latent MSE stays low.
+  This information is ``free''---it does not increase the prior loss.
+
+  \item \textbf{Unpredictable content} (e.g., a shadow flickered, a background texture changed, camera noise):
+  The prior \emph{cannot} predict this from $(\vz_{t-H+1:t,\text{clean}}, \va_{t-H:t-1})$ because nothing in the history explains it.
+  This spikes the latent MSE, increasing the prior loss.
+\end{enumerate}
+
+\section{The Trade-Off (Latent MSE vs.\ Decoder Loss)}
+
+The total Stage~1 loss is:
+\begin{equation}
+  \loss_{\text{S1}} = \underbrace{\loss_z^{\text{latent}}}_{\text{penalizes unpredictable info}} + \gamma \cdot \underbrace{\loss_a}_{\text{rewards action-relevant info}} + c_{\text{lf}} \cdot \underbrace{\loss_x}_{\text{rewards reconstruction info}}.
+  \label{eq:total}
+\end{equation}
+
+\begin{itemize}[leftmargin=*]
+  \item The \textbf{decoder loss} $\loss_x$ wants \emph{more} information in $\vz_{t+1,\text{clean}}$ (better reconstruction of $\vo_{t+1}$).
+  \item The \textbf{latent prior loss} $\loss_z^{\text{latent}}$ penalizes information that the prior cannot predict from history.
+  \item At equilibrium, the encoder keeps only what the prior can predict---which is exactly the physics that the action history causally affects.
+\end{itemize}
+
+The information decomposition makes this precise:
+\begin{equation}
+  I(\vz_{t+1,\text{clean}};\, \vo_{t+1}) = \underbrace{I(\vz_{t+1,\text{clean}};\, \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{unpredictable (penalized by } \loss_z^{\text{latent}}\text{)}} + \underbrace{I(\vz_{t+1,\text{clean}};\, \mathcal{H}_t^z)}_{\text{predictable from history (free)}}.
+  \label{eq:info_decomp}
+\end{equation}
+
+The prior loss upper-bounds the first term.
+The decoder loss incentivizes maximizing the total.
+Together, they push the encoder to maximize predictable information and discard unpredictable information.
+
+\section{Why the Action Loss is Necessary}
+
+\textbf{Without the action loss ($\gamma = 0$)}, the encoder could trivially minimize $\loss_z^{\text{latent}}$ by encoding a constant---perfectly predictable but completely uninformative.
+The decoder loss would fight this, but the result would be a poor equilibrium where the latent captures some visual content without any guarantee of action-relevance.
+
+\textbf{With the action loss ($\gamma > 0$)}, the prior must also recover $\va_t$ from $(\vz_{t+1,\tau}, \mathcal{H}_t^z)$.
+This is essentially an \emph{inverse dynamics} signal: the latent transition $\vz_t \to \vz_{t+1}$ must be informative enough to infer what action caused it.
+
+Concretely, if $\va_t$ commands the gripper to close on an object, the latent $\vz_{t+1,\text{clean}}$ must encode the resulting contact geometry precisely enough that the prior can reconstruct the action.
+If the latent discards this information, $\|\va_t - \hat{\va}_t\|^2$ spikes.
+
+The rate-distortion equilibrium with action loss is:
+\begin{equation}
+  \vz_{t+1,\text{clean}}^* = \arg\min_{\vz} \Big[
+    \underbrace{I(\vz;\, \vo_{t+1} \mid \mathcal{H}_t^z)}_{\substack{\text{rate: unpredictable bits} \\ \text{(minimize)}}}
+    + c_{\text{lf}} \cdot \underbrace{D(\vo_{t+1},\, \hat{\vo}_\theta)}_{\substack{\text{distortion: reconstruction} \\ \text{(minimize)}}}
+    - \gamma \cdot \underbrace{I(\va_t;\, \vz \mid \mathcal{H}_t^z)}_{\substack{\text{action info in latent} \\ \text{(maximize)}}}
+  \Big].
+  \label{eq:rd_action}
+\end{equation}
+
+The three terms create a balanced pressure:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Rate} ($\loss_z^{\text{latent}}$): Compress out everything unpredictable from history.
+  \item \textbf{Distortion} ($\loss_x$): Retain enough information for good reconstruction.
+  \item \textbf{Action info} ($\loss_a$): Ensure the latent transition encodes the causal effect of the action.
+\end{enumerate}
+
+The result is a latent that encodes \emph{exactly the action-predictable physical geometry}:
+gripper poses, object displacements, contact states---while discarding textures, lighting, and background clutter that no action in the history can explain.
+
+\section{Caveat}
+
+The claim is somewhat idealized. In practice:
+\begin{itemize}[leftmargin=*]
+  \item The prior has finite capacity, so some predictable information may still be penalized if the prior network cannot learn the dynamics well enough.
+  \item The loss factor $c_{\text{lf}}$ controls the trade-off: large $c_{\text{lf}}$ lets more information through (decoder wins), small $c_{\text{lf}}$ compresses harder (prior wins).
+  \item ``Mathematically forced'' is strong language---it is more accurate to say the loss \emph{incentivizes} the encoder in this direction.
+    The bound is tight only when $w(\lambda) = 1$, and the loss factor loosens it further.
+\end{itemize}
+
+\end{document}
