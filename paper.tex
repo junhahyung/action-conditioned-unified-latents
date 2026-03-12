@@ -24,9 +24,11 @@
 
 % Custom commands
 \newcommand{\vx}{\bm{x}}
+\newcommand{\vo}{\bm{o}}
 \newcommand{\vz}{\bm{z}}
 \newcommand{\va}{\bm{a}}
 \newcommand{\vep}{\bm{\epsilon}}
+\newcommand{\vh}{\bm{h}}
 \newcommand{\R}{\mathbb{R}}
 \newcommand{\E}{\mathbb{E}}
 \newcommand{\KL}{\mathrm{KL}}
@@ -47,13 +49,13 @@
 \maketitle
 
 \begin{abstract}
-Learning compact, physics-grounded visual representations is a central challenge for building robotic world models that can predict the consequences of actions.
+Learning compact, physics-grounded visual representations is a central challenge for building robotic world models that jointly predict future observations and actions.
 Existing approaches either reconstruct raw pixels---wasting capacity on task-irrelevant details---or use frozen pretrained features that discard action-relevant geometric information.
-We introduce \textbf{Action-Conditioned Unified Latents (AC-UL)}, a framework that extends the Unified Latents (UL) variational objective to state-transition dynamics.
-By replacing UL's unconditional diffusion prior with an \emph{action-conditioned dynamics prior}, we derive a variational bound that \emph{mathematically forces} the encoder to discard unpredictable visual content while retaining the physical geometry that actions affect.
-In Stage~1, the encoder, dynamics prior, and diffusion decoder are jointly trained so that the prior must predict the future latent from the current latent and the executed action; any encoder information that cannot be predicted from the action increases the loss.
-In Stage~2, the frozen encoder produces a physics-grounded visual vocabulary on which an autoregressive transformer is trained for action prediction and next-latent forecasting, enabling long-horizon planning.
-We evaluate AC-UL on simulated manipulation benchmarks (CALVIN, LIBERO, RLBench) and real-world robotic video (DROID), demonstrating improvements over pixel-reconstruction world models and frozen-feature approaches in both planning accuracy and policy performance.
+We introduce \textbf{Action-Conditioned Unified Latents (AC-UL)}, a framework that extends the Unified Latents (UL) variational objective to autoregressive state-action dynamics.
+Given a history of observations $\vo_{t-H+1:t}$ and past actions $\va_{t-H:t-1}$, our dynamics prior \emph{jointly} generates the next observation latent $\vz_{t+1}$ and the current action $\va_t$---unifying world modeling and policy learning in a single generative process.
+By conditioning the diffusion prior on the observation-action history, the variational bound \emph{mathematically forces} the encoder to discard unpredictable visual content while retaining the physical geometry that the history of interactions can predict.
+In Stage~1, the encoder, dynamics prior, and diffusion decoder are jointly trained; in Stage~2, the frozen encoder provides a physics-grounded visual vocabulary on which an autoregressive diffusion transformer is trained for joint video-action generation, enabling closed-loop planning via iterative rollouts.
+We evaluate AC-UL on simulated manipulation benchmarks (CALVIN, LIBERO) and real-world robotic video (DROID), demonstrating improvements over pixel-reconstruction world models and frozen-feature approaches in both planning accuracy and policy performance.
 \end{abstract}
 
 %=====================================================================
@@ -64,25 +66,28 @@ We evaluate AC-UL on simulated manipulation benchmarks (CALVIN, LIBERO, RLBench)
 Building world models---internal simulators that predict how actions change the environment---is a long-standing goal in robotics and reinforcement learning~\citep{ha2018world,hafner2023dreamerv3}.
 A world model that operates in a learned latent space can be orders of magnitude cheaper to roll out than a pixel-level simulator, enabling model-predictive control, planning, and data-efficient policy learning.
 
-Recent progress in latent diffusion models~\citep{rombach2022high} and vision-language-action (VLA) architectures~\citep{brohan2023rt2,kim2024openvla} has produced powerful visual representations.
+Recent progress in autoregressive video-action models~\citep{dreamzero2025} has shown that jointly generating future video frames and robot actions from a shared backbone can achieve remarkable generalization.
+Meanwhile, latent diffusion models~\citep{rombach2022high} and vision-language-action (VLA) architectures~\citep{brohan2023rt2,kim2024openvla} have produced powerful visual representations.
 However, two fundamental problems remain:
 
-\textbf{(1) Pixel-reconstruction world models} (e.g., DreamerV3~\citep{hafner2023dreamerv3}, IRIS~\citep{micheli2023transformers}) spend capacity encoding textures, lighting, and background clutter that are irrelevant to action outcomes.
+\textbf{(1) Pixel-reconstruction world models} (e.g., DreamerV3~\citep{hafner2023dreamerv3}, DreamZero~\citep{dreamzero2025}) spend capacity encoding textures, lighting, and background clutter that are irrelevant to the dynamics.
 The learned latent confounds physical geometry with appearance, making long-horizon rollouts noisy and planning unreliable.
 
 \textbf{(2) Frozen-feature approaches} (e.g., DINO-WM~\citep{zhou2024dinowm}) use pretrained encoders (DINOv2) that were not trained to understand action effects.
-While these features transfer surprisingly well, they are agnostic to the causal structure of manipulation---a DINO patch encodes the visual appearance of a gripper identically whether it is about to grasp an object or retract.
+While these features transfer surprisingly well, they are agnostic to the causal structure of manipulation.
 
-We propose a third path: \textbf{learning the latent representation itself to encode only the information that actions can predict}.
-Our approach extends the Unified Latents (UL) framework~\citep{heek2025ul} from unconditional image modeling to action-conditioned state transitions.
-The key insight is simple: by conditioning the diffusion prior on the current state and action, any encoder information that \emph{cannot} be predicted from the action will spike the variational loss.
-The encoder is thus \emph{mathematically forced} to discard unpredictable pixels (random textures, lighting variations) and retain only the physical geometry the robot's action affects.
+We propose a third path: \textbf{learning the latent representation itself to encode only the information that the history of interactions can predict}.
+Our approach extends the Unified Latents (UL) framework~\citep{heek2025ul} from unconditional image modeling to \emph{joint} observation-action dynamics.
+The key insight is that by conditioning the diffusion prior on the history of past observations and actions, and requiring it to jointly predict the next observation latent \emph{and} the current action, any encoder information that cannot be predicted from this history will spike the variational loss.
+The encoder is thus mathematically forced to discard unpredictable pixels and retain only the physical geometry that the robot's interaction history can explain.
+
+This formulation---where the model takes in $(\vo_{t-H+1:t}, \va_{t-H:t-1})$ and generates $(\vo_{t+1}, \va_t)$---follows the autoregressive structure of DreamZero~\citep{dreamzero2025}, but operates in a principled latent space rather than raw pixels.
 
 Our contributions are:
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
-  \item We derive the \textbf{Action-Conditioned Unified Latent (AC-UL)} objective, extending the UL variational bound from unconditional priors to dynamics-conditioned priors (\Cref{sec:method}).
-  \item We provide a complete \textbf{two-stage training algorithm}: Stage~1 jointly trains the encoder, action-conditioned prior, and diffusion decoder; Stage~2 trains an autoregressive transformer on frozen latents for policy learning and planning (\Cref{sec:stage2}).
-  \item We propose and evaluate three downstream applications: \textbf{model-predictive planning}, \textbf{imitation learning with latent world modeling} (compared to FLARE~\citep{nvidia2025flare}), and \textbf{real-world video prediction} on the DROID dataset (\Cref{sec:experiments}).
+  \item We derive the \textbf{Action-Conditioned Unified Latent (AC-UL)} objective, extending the UL variational bound to history-conditioned \emph{joint} observation-action dynamics (\Cref{sec:method}).
+  \item We provide a complete \textbf{two-stage training algorithm}: Stage~1 jointly trains the encoder, history-conditioned dynamics prior, and diffusion decoder; Stage~2 trains an autoregressive diffusion transformer on frozen latents for joint video-action generation (\Cref{sec:stage2}).
+  \item We propose and evaluate three downstream applications: \textbf{closed-loop planning via latent rollouts}, \textbf{imitation learning with joint world-action modeling} (compared to FLARE~\citep{nvidia2025flare}), and \textbf{real-world video prediction} on the DROID dataset (\Cref{sec:experiments}).
 \end{enumerate}
 
 %=====================================================================
@@ -140,148 +145,202 @@ The reconstruction term uses a diffusion decoder conditioned on $\vz_0$:
 \end{equation}
 with sigmoid weighting $w_x(\lambda_x(t)) = \sigmoid(\lambda_x(t) - b)$ and a loss factor $c_{\text{lf}} \in [1.3, 1.7]$ that up-weighs the decoder to prevent posterior collapse.
 
+\subsection{Autoregressive Video-Action Models}
+\label{sec:dreamzero_background}
+
+DreamZero~\citep{dreamzero2025} introduced an autoregressive diffusion transformer that jointly generates video frames and robot actions.
+Given a history of observations $\vo_{t-H+1:t}$ and past actions $\va_{t-H:t-1}$, the model generates the next observation $\vo_{t+1}$ and the current action $\va_t$ as a single denoising step:
+\begin{equation}
+  p_\theta(\vo_{t+1}, \va_t \mid \vo_{t-H+1:t}, \va_{t-H:t-1}).
+  \label{eq:dreamzero}
+\end{equation}
+This can be decomposed as video prediction followed by inverse dynamics: $p_\theta(\vo_{t+1} \mid \text{history}) \times p_\theta(\va_t \mid \vo_{t+1}, \text{history})$.
+During closed-loop execution, predicted frames are replaced with ground-truth observations after each action, preventing error accumulation.
+We adopt this autoregressive structure but operate in a learned latent space that is optimized for action-relevant content.
+
 %=====================================================================
 \section{Method: Action-Conditioned Unified Latents}
 \label{sec:method}
 %=====================================================================
 
-We now extend the UL framework from single-image encoding to \emph{action-conditioned state transitions}. The central idea is to replace the unconditional prior $p_\theta(\vz_0)$ with a \emph{dynamics prior} $p_\theta(\vz_{k+1,0} \mid \vz_{k,\text{clean}}, \va_k)$ that must predict the future latent from the current state and the executed action.
+We extend the UL framework from single-image encoding to \emph{history-conditioned joint observation-action dynamics}.
+The central idea is to replace the unconditional prior $p_\theta(\vz_0)$ with a \emph{dynamics prior} $p_\theta(\vz_{t+1,0}, \va_t \mid \mathcal{H}_t)$ that must jointly predict the future observation latent and the current action from the interaction history.
 
 \subsection{Problem Setup and Variables}
 \label{sec:variables}
 
-We consider a robotic agent that observes image frames and executes actions:
+We consider a robotic agent that observes image frames and executes actions in an autoregressive loop. We define the \emph{interaction history} at time $t$:
+\begin{equation}
+  \mathcal{H}_t = \big(\vo_{t-H+1}, \va_{t-H}, \vo_{t-H+2}, \va_{t-H+1}, \ldots, \vo_{t-1}, \va_{t-1}, \vo_t\big),
+  \label{eq:history}
+\end{equation}
+where:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \textbf{Current observation:} $\vx_k \in \R^{H \times W \times 3}$, the RGB image at time step $k$.
-  \item \textbf{Action:} $\va_k \in \R^{d_a}$, the robot action executed at step $k$ (e.g., end-effector displacement + gripper state).
-  \item \textbf{Future observation:} $\vx_{k+1} \in \R^{H \times W \times 3}$, the resulting image at step $k+1$.
+  \item $\vo_k \in \R^{H_{\text{img}} \times W_{\text{img}} \times 3}$: RGB observation at time step $k$.
+  \item $\va_k \in \R^{d_a}$: robot action executed at step $k$ (e.g., end-effector displacement + gripper state).
+  \item $H$: history window length.
 \end{itemize}
 
-The encoder $E_\theta$ compresses each frame into a deterministic latent:
+The model's task is to jointly generate:
 \begin{equation}
-  \vz_{k,\text{clean}} = E_\theta(\vx_k), \quad
-  \vz_{k+1,\text{clean}} = E_\theta(\vx_{k+1}),
+  (\vo_{t+1}, \va_t) \sim p_\theta(\vo_{t+1}, \va_t \mid \mathcal{H}_t).
+  \label{eq:joint_gen}
+\end{equation}
+That is, given the current and past observations and all past actions, the model simultaneously predicts \emph{what action to take now} ($\va_t$) and \emph{what will happen next} ($\vo_{t+1}$).
+
+\subsection{Latent Encoding and the Forward Process}
+\label{sec:encoding}
+
+The encoder $E_\theta$ compresses each observation into a deterministic latent:
+\begin{equation}
+  \vz_{k,\text{clean}} = E_\theta(\vo_k) \in \R^{h \times w \times c}, \quad k = t-H+1, \ldots, t, t+1,
   \label{eq:encode}
 \end{equation}
-where $\vz \in \R^{h \times w \times c}$ with spatial dimensions $h \times w$ downsampled from $H \times W$ and $c$ latent channels.
+with spatial dimensions $h \times w$ downsampled from $H_{\text{img}} \times W_{\text{img}}$ and $c$ latent channels.
 
-\subsection{The Forward Diffusion Process on Latents}
-\label{sec:forward}
-
-Following UL, we add fixed Gaussian noise to the clean latent. For any diffusion time $\tau \in [0,1]$, the noisy future latent is:
+The latent history is:
 \begin{equation}
-  \vz_{k+1,\tau} = \alpha_z(\tau)\,\vz_{k+1,\text{clean}} + \sigma_z(\tau)\,\vep, \quad \vep \sim \mathcal{N}(\bm{0}, \bm{I}),
+  \mathcal{H}_t^z = \big(\vz_{t-H+1,\text{clean}}, \va_{t-H}, \vz_{t-H+2,\text{clean}}, \va_{t-H+1}, \ldots, \vz_{t,\text{clean}}\big).
+  \label{eq:latent_history}
+\end{equation}
+
+Following UL, we add fixed Gaussian noise to the future clean latent. For any diffusion time $\tau \in [0,1]$:
+\begin{equation}
+  \vz_{t+1,\tau} = \alpha_z(\tau)\,\vz_{t+1,\text{clean}} + \sigma_z(\tau)\,\vep, \quad \vep \sim \mathcal{N}(\bm{0}, \bm{I}),
   \label{eq:forward_latent}
 \end{equation}
-where $\alpha_z(\tau)$ and $\sigma_z(\tau)$ are determined by the log-SNR schedule $\lambda_z(\tau) = \log(\alpha_z^2(\tau)/\sigma_z^2(\tau))$ with the variance-preserving constraint $\alpha_z^2(\tau) + \sigma_z^2(\tau) = 1$.
+where the log-SNR schedule $\lambda_z(\tau) = \log(\alpha_z^2(\tau)/\sigma_z^2(\tau))$ satisfies $\alpha_z^2(\tau) + \sigma_z^2(\tau) = 1$.
 
-At $\tau = 0$ (the minimum noise level), we use $\lambda_z(0) = 5$, giving:
+At $\tau = 0$ (minimum noise level), $\lambda_z(0) = 5$ gives:
 \begin{equation}
   \alpha_z(0) = \sqrt{\sigmoid(5)} \approx 0.9967, \quad
   \sigma_z(0) = \sqrt{\sigmoid(-5)} \approx 0.0813.
   \label{eq:min_noise}
 \end{equation}
-At $\tau = 1$ (maximum destruction), $\lambda_z(1) \to -\infty$ so $\vz_{k+1,1} \approx \vep \sim \mathcal{N}(\bm{0}, \bm{I})$.
 
-\subsection{Action-Conditioned Dynamics Prior}
+\subsection{History-Conditioned Joint Dynamics Prior}
 \label{sec:ac_prior}
 
-This is the central contribution. In standard UL, the prior $\hat{\vz}(\vz_t, \theta)$ unconditionally predicts the clean latent from the noisy latent. We replace this with a \emph{dynamics prior} that conditions on the current clean latent $\vz_{k,\text{clean}}$ and the robot's action $\va_k$:
+This is the central contribution. In standard UL, the prior $\hat{\vz}(\vz_t, \theta)$ unconditionally denoises the latent.
+We replace this with a \emph{joint dynamics prior} that conditions on the full interaction history $\mathcal{H}_t^z$ and simultaneously predicts the future observation latent and the current action:
 \begin{equation}
-  \hat{\vz}_\theta^{\text{dyn}}\!\left(\vz_{k+1,\tau},\; \vz_{k,\text{clean}},\; \va_k\right) \approx \vz_{k+1,\text{clean}}.
+  \big(\hat{\vz}_{t+1,\text{clean}},\; \hat{\va}_t\big) = \hat{f}_\theta^{\text{dyn}}\!\left(\vz_{t+1,\tau},\; \mathcal{H}_t^z\right).
   \label{eq:dynamics_prior_pred}
 \end{equation}
 
-\subsubsection{Derivation of the Action-Conditioned KL Bound}
+The prior predicts:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Future latent:} $\hat{\vz}_{t+1,\text{clean}} \approx \vz_{t+1,\text{clean}}$ --- what the next observation will look like in latent space.
+  \item \textbf{Current action:} $\hat{\va}_t \approx \va_t$ --- what action should be taken now.
+\end{enumerate}
 
-We derive the AC-UL prior loss by applying the standard diffusion KL bound (\Cref{eq:diff_kl}) to the conditional distributions. Define:
+\subsubsection{Derivation of the History-Conditioned Joint KL Bound}
+
+We derive the AC-UL prior loss by applying the diffusion KL bound (\Cref{eq:diff_kl}) to the conditional distributions. The KL between the encoder's output distribution and the dynamics prior over the \emph{joint} observation-action space is:
 \begin{align}
-  q(\vz_{k+1,0:1} \mid \vx_{k+1}) &: \text{forward diffusion path, data-conditioned}, \\
-  p_\theta(\vz_{k+1,0:1} \mid \vz_{k,\text{clean}}, \va_k) &: \text{learned reverse path, action-conditioned}.
+  &\KL\!\Big[p(\vz_{t+1,0}, \va_t \mid \vo_{t+1}, \mathcal{H}_t) \;\Big\|\; p_\theta(\vz_{t+1,0}, \va_t \mid \mathcal{H}_t^z)\Big].
+  \label{eq:joint_kl}
 \end{align}
 
-The KL between the encoder's output distribution and the dynamics prior is:
-\begin{align}
-  &\KL\!\Big[p(\vz_{k+1,0} \mid \vx_{k+1}) \;\Big\|\; p_\theta(\vz_{k+1,0} \mid \vz_{k,\text{clean}}, \va_k)\Big] \nonumber \\
-  &\leq \KL\!\Big[p(\vz_{k+1,0}, \ldots, \vz_{k+1,1} \mid \vx_{k+1}) \;\Big\|\; p_\theta(\vz_{k+1,0}, \ldots, \vz_{k+1,1} \mid \vz_{k,\text{clean}}, \va_k)\Big] \label{eq:chain_kl}
-\end{align}
-by the chain rule of KL divergence (marginalizing cannot increase KL).
+Since the action $\va_t$ is deterministic given the data (it is observed), the encoder distribution over the joint space factorizes as:
+\begin{equation}
+  p(\vz_{t+1,0}, \va_t \mid \vo_{t+1}, \mathcal{H}_t) = p(\vz_{t+1,0} \mid \vo_{t+1}) \cdot \delta(\va_t),
+  \label{eq:encoder_factorize}
+\end{equation}
+where $\delta(\va_t)$ is a point mass at the observed action.
 
-Expanding the right-hand side using the standard diffusion decomposition~\citep{kingma2021variational}:
+Applying the chain rule of KL and the diffusion bound to the latent component:
 \begin{align}
-  &\KL\!\Big[p(\vz_{k+1,0} \mid \vx_{k+1}) \;\Big\|\; p_\theta(\vz_{k+1,0} \mid \vz_{k,\text{clean}}, \va_k)\Big] \nonumber \\
+  &\KL\!\Big[p(\vz_{t+1,0}, \va_t \mid \vo_{t+1}, \mathcal{H}_t) \;\Big\|\; p_\theta(\vz_{t+1,0}, \va_t \mid \mathcal{H}_t^z)\Big] \nonumber \\
+  &= \KL\!\Big[p(\vz_{t+1,0} \mid \vo_{t+1}) \;\Big\|\; p_\theta(\vz_{t+1,0} \mid \mathcal{H}_t^z)\Big] - \E_{p(\vz_{t+1,0}|\vo_{t+1})}\!\Big[\log p_\theta(\va_t \mid \vz_{t+1,0}, \mathcal{H}_t^z)\Big] + \text{const}.
+  \label{eq:joint_kl_decompose}
+\end{align}
+
+The first term (latent KL) is bounded via the diffusion decomposition:
+\begin{align}
+  &\KL\!\Big[p(\vz_{t+1,0} \mid \vo_{t+1}) \;\Big\|\; p_\theta(\vz_{t+1,0} \mid \mathcal{H}_t^z)\Big] \nonumber \\
   &\leq \E_{\tau \sim \mathcal{U}(0,1)}\!\left[
     -\frac{d\lambda_z(\tau)}{d\tau}\,\frac{\exp\lambda_z(\tau)}{2}\,
-    \left\|\vz_{k+1,\text{clean}} - \hat{\vz}_\theta^{\text{dyn}}\!\left(\vz_{k+1,\tau},\, \vz_{k,\text{clean}},\, \va_k\right)\right\|^2
+    \left\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta^{\text{dyn}}\!\left(\vz_{t+1,\tau},\, \mathcal{H}_t^z\right)\right\|^2
   \right] \nonumber \\
-  &\quad + \KL\!\Big[p(\vz_{k+1,1} \mid \vx_{k+1}) \;\Big\|\; \mathcal{N}(\bm{0},\bm{I})\Big].
+  &\quad + \KL\!\Big[p(\vz_{t+1,1} \mid \vo_{t+1}) \;\Big\|\; \mathcal{N}(\bm{0},\bm{I})\Big].
   \label{eq:ac_prior_loss}
 \end{align}
 
-Note that the weighting $w(\lambda_z(\tau)) = 1$ is required for the bound to be tight, exactly as in UL. The terminal KL $\KL[p(\vz_{k+1,1}|\vx_{k+1}) \| \mathcal{N}(\bm{0},\bm{I})]$ is negligibly small for large $|\lambda_z(1)|$.
-
-\subsubsection{Why Action-Conditioning Forces Physics-Grounded Encoding}
-
-The loss in \Cref{eq:ac_prior_loss} is driven by the MSE:
+The second term (action likelihood) is trained with a standard regression loss:
 \begin{equation}
-  \left\|\vz_{k+1,\text{clean}} - \hat{\vz}_\theta^{\text{dyn}}(\vz_{k+1,\tau}, \vz_{k,\text{clean}}, \va_k)\right\|^2.
-  \label{eq:mse_core}
+  \loss_a(\theta) = \left\|\va_t - \hat{\va}_\theta\!\left(\vz_{t+1,\tau}, \mathcal{H}_t^z\right)\right\|^2.
+  \label{eq:action_loss}
 \end{equation}
 
-Consider what happens if the encoder $E_\theta$ encodes information into $\vz_{k+1,\text{clean}}$ that is \emph{unpredictable} from the tuple $(\vz_{k,\text{clean}}, \va_k)$:
+The complete prior loss combines both:
+\begin{equation}
+  \loss_z^{\text{joint}}(\theta) = \loss_z^{\text{latent}}(\theta) + \gamma \cdot \loss_a(\theta),
+  \label{eq:joint_prior_loss}
+\end{equation}
+where $\gamma$ controls the relative weight of action prediction and $\loss_z^{\text{latent}}$ is given by \Cref{eq:ac_prior_loss}.
+
+\subsubsection{Why History-Conditioned Joint Prediction Forces Physics-Grounded Encoding}
+
+The loss is driven by two MSE terms: (i) the latent prediction error $\|\vz_{t+1,\text{clean}} - \hat{\vz}_{t+1}\|^2$ and (ii) the action prediction error $\|\va_t - \hat{\va}_t\|^2$.
+
+Consider what happens if the encoder $E_\theta$ encodes information into $\vz_{t+1,\text{clean}}$ that is \emph{unpredictable} from the history $\mathcal{H}_t^z$:
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Random textures/lighting:} If $E_\theta$ preserves random background variations in $\vz_{k+1,\text{clean}}$, the dynamics prior cannot predict these from $\va_k$ (the action does not cause lighting to change). The MSE term spikes, increasing the loss.
+  \item \textbf{Random textures/lighting:} If $E_\theta$ preserves random background variations, the dynamics prior cannot predict these from the history (past frames and actions do not determine future lighting). The latent MSE spikes.
 
-  \item \textbf{Stochastic environment noise:} Camera noise, slight object vibrations, and other sources of aleatoric uncertainty are similarly unpredictable from $\va_k$.
+  \item \textbf{Novel objects entering the scene:} Sudden appearance of objects not visible in the history is unpredictable. The encoder learns to down-weight such transients.
 
-  \item \textbf{Action-caused geometry:} The gripper position, object displacement, and contact geometry \emph{are} predictable from $(\vz_{k,\text{clean}}, \va_k)$ via learned physics. Encoding this information \emph{decreases} the MSE.
+  \item \textbf{Action-caused geometry:} Gripper position, object displacement, and contact geometry \emph{are} predictable from the history of states and actions via learned physics. Encoding this \emph{decreases} both the latent and action MSE.
 \end{enumerate}
 
-The encoder minimizes the total loss $\loss = \loss_z + c_{\text{lf}} \cdot \loss_x$. The prior loss $\loss_z$ penalizes unpredictable information; the decoder loss $\loss_x$ rewards information that aids reconstruction. The equilibrium is a latent that encodes \emph{exactly the action-predictable physical geometry}, discarding everything else.
+The \emph{joint} prediction of $(\vz_{t+1}, \va_t)$ creates an additional pressure: the latent must contain enough action-relevant structure that the prior can infer \emph{what action was taken} (inverse dynamics). This prevents the encoder from collapsing to a trivially predictable but uninformative representation.
 
-\textbf{Formal argument.} Let $I(\vz_{k+1,\text{clean}}; \vx_{k+1})$ denote the mutual information between the latent and the future frame. We can decompose:
+\textbf{Formal argument.}
+The total information in the latent can be decomposed as:
 \begin{equation}
-  I(\vz_{k+1,\text{clean}}; \vx_{k+1}) = \underbrace{I(\vz_{k+1,\text{clean}}; \vx_{k+1} \mid \vz_{k,\text{clean}}, \va_k)}_{\text{unpredictable info (penalized)}} + \underbrace{I(\vz_{k+1,\text{clean}}; \vz_{k,\text{clean}}, \va_k)}_{\text{action-predictable info (free)}}.
+  I(\vz_{t+1,\text{clean}}; \vo_{t+1}) = \underbrace{I(\vz_{t+1,\text{clean}}; \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{unpredictable info (penalized)}} + \underbrace{I(\vz_{t+1,\text{clean}}; \mathcal{H}_t^z)}_{\text{history-predictable info (free)}}.
   \label{eq:info_decomp}
 \end{equation}
-The prior loss bounds the first term (unpredictable information), while the second term (information shared with the action) is ``free'' in the sense that the prior can predict it perfectly. The decoder loss incentivizes maximizing total information for reconstruction. Together, they push the encoder to maximize action-predictable information while minimizing unpredictable information.
+The prior loss bounds the first term. The decoder loss incentivizes maximizing total information. The action loss ensures the latent captures dynamics-relevant structure. Together, they push the encoder to a representation that is maximally informative about action-predictable physics while discarding everything else.
 
 \subsection{Diffusion Decoder for Future Frame Reconstruction}
 \label{sec:decoder}
 
-The decoder operates exactly as in standard UL but reconstructs the \emph{future} frame $\vx_{k+1}$. The noisy image is:
+The decoder operates exactly as in standard UL but reconstructs the \emph{future} observation $\vo_{t+1}$. The noisy image is:
 \begin{equation}
-  \vx_{k+1,\tau} = \alpha_x(\tau)\,\vx_{k+1} + \sigma_x(\tau)\,\vep, \quad \vep \sim \mathcal{N}(\bm{0}, \bm{I}),
+  \vo_{t+1,\tau} = \alpha_x(\tau)\,\vo_{t+1} + \sigma_x(\tau)\,\vep, \quad \vep \sim \mathcal{N}(\bm{0}, \bm{I}),
   \label{eq:forward_image}
 \end{equation}
 with its own log-SNR schedule $\lambda_x(\tau)$.
 
-The decoder network $D_\theta = \hat{\vx}(\vx_{k+1,\tau}, \vz_{k+1,0}, \theta)$ conditions on both the noisy image and the slightly noisy future latent $\vz_{k+1,0}$ (at the minimum noise level). The reconstruction bound is:
+The decoder network $D_\theta = \hat{\vo}(\vo_{t+1,\tau}, \vz_{t+1,0}, \theta)$ conditions on both the noisy image and the slightly noisy future latent $\vz_{t+1,0}$. The reconstruction bound is:
 \begin{equation}
-  -\log p_\theta(\vx_{k+1} \mid \vz_{k+1,0}) \leq
+  -\log p_\theta(\vo_{t+1} \mid \vz_{t+1,0}) \leq
   \E_{\tau \sim \mathcal{U}(0,1)}\!\left[
     \frac{d\lambda_x(\tau)}{d\tau}\,\frac{\exp\lambda_x(\tau)}{2}\,
     w_x(\lambda_x(\tau))\,
-    \|\vx_{k+1} - \hat{\vx}(\vx_{k+1,\tau}, \vz_{k+1,0}, \theta)\|^2
-  \right].
+    \|\vo_{t+1} - \hat{\vo}(\vo_{t+1,\tau}, \vz_{t+1,0}, \theta)\|^2
+  \right],
   \label{eq:ac_decoder_loss}
 \end{equation}
+with sigmoid weighting $w_x(\lambda_x(\tau)) = \sigmoid(\lambda_x(\tau) - b)$ and loss factor $c_{\text{lf}} \in [1.3, 1.7]$.
 
-We use the sigmoid weighting from UL:
-\begin{equation}
-  w_x(\lambda_x(\tau)) = \sigmoid(\lambda_x(\tau) - b),
-  \label{eq:sigmoid_weight}
-\end{equation}
-with bias $b \in [2, 5]$, and a loss factor $c_{\text{lf}} \in [1.3, 1.7]$ that up-weighs the decoder relative to the prior.
+\subsection{Complete Stage 1 Objective}
+\label{sec:stage1_objective}
 
-\textbf{Role of the loss factor.}
-The combined per-transition loss is:
+The total per-transition loss combines the joint prior loss and the decoder loss:
 \begin{equation}
-  \loss(\vx_k, \va_k, \vx_{k+1}) = \underbrace{\loss_z(\theta)}_{\text{prior}} + c_{\text{lf}} \cdot \underbrace{\loss_x(\theta)}_{\text{decoder}}.
+  \loss_{\text{S1}}(\theta) = \underbrace{\loss_z^{\text{latent}}(\theta) + \gamma \cdot \loss_a(\theta)}_{\text{joint dynamics prior}} + c_{\text{lf}} \cdot \underbrace{\loss_x(\theta)}_{\text{decoder}}.
   \label{eq:total_loss}
 \end{equation}
-The loss factor $c_{\text{lf}} > 1$ slightly discounts the prior's KL penalty, preventing posterior collapse (where the decoder ignores $\vz_0$ entirely). In our setting, this means the latent retains \emph{high-frequency geometric features} (e.g., exact gripper-object distance) even when these require more bits, because the decoder loss rewards encoding them. The prior ensures that only \emph{action-predictable} high-frequency features survive.
+
+\textbf{Interpretation of each term:}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item $\loss_z^{\text{latent}}$: Penalizes unpredictable information in the future latent given the history. Forces the encoder to discard action-irrelevant content.
+  \item $\loss_a$: Requires the latent to contain enough dynamics structure that the action can be inferred. Prevents trivial latent collapse.
+  \item $\loss_x$: Rewards information that aids reconstruction. Ensures the latent retains fine geometric detail (e.g., gripper-object distance).
+\end{itemize}
 
 \subsection{Stage 1 Training Algorithm}
 \label{sec:stage1_algo}
@@ -289,24 +348,27 @@ The loss factor $c_{\text{lf}} > 1$ slightly discounts the prior's KL penalty, p
 The complete Stage~1 training procedure is given in \Cref{alg:stage1}.
 
 \begin{algorithm}[t]
-\caption{Stage 1: Training Action-Conditioned Unified Latents}
+\caption{Stage 1: Training AC-UL with Joint Dynamics Prior}
 \label{alg:stage1}
 \begin{algorithmic}[1]
-\REQUIRE Dataset of transitions $\{(\vx_k, \va_k, \vx_{k+1})\}$, noise schedule $\lambda_z(\cdot)$, $\lambda_x(\cdot)$
-\STATE Sample transition $(\vx_k, \va_k, \vx_{k+1}) \sim \mathcal{D}$
-\STATE Encode: $\vz_{k,\text{clean}} = E_\theta(\vx_k)$, \quad $\vz_{k+1,\text{clean}} = E_\theta(\vx_{k+1})$
-\STATE \textbf{// Prior loss}
+\REQUIRE Dataset of trajectories $\{(\vo_0, \va_0, \vo_1, \va_1, \ldots)\}$, history length $H$
+\STATE Sample window: $(\vo_{t-H+1:t+1}, \va_{t-H:t}) \sim \mathcal{D}$
+\STATE Encode all observations: $\vz_{k,\text{clean}} = E_\theta(\vo_k)$ for $k = t-H+1, \ldots, t+1$
+\STATE Construct latent history: $\mathcal{H}_t^z = (\vz_{t-H+1,\text{clean}}, \va_{t-H}, \ldots, \vz_{t,\text{clean}})$
+\STATE \textbf{// Joint dynamics prior loss}
 \STATE Sample $\tau \sim \mathcal{U}(0,1)$, $\vep \sim \mathcal{N}(\bm{0}, \bm{I})$
-\STATE $\vz_{k+1,\tau} = \alpha_z(\tau)\,\vz_{k+1,\text{clean}} + \sigma_z(\tau)\,\vep$
-\STATE $\loss_z = -\frac{d\lambda_z(\tau)}{d\tau}\,\frac{\exp\lambda_z(\tau)}{2}\,\|\vz_{k+1,\text{clean}} - \hat{\vz}_\theta^{\text{dyn}}(\vz_{k+1,\tau}, \vz_{k,\text{clean}}, \va_k)\|^2 + \KL[p(\vz_{k+1,1}|\vx_{k+1})\|\mathcal{N}(\bm{0},\bm{I})]$
+\STATE $\vz_{t+1,\tau} = \alpha_z(\tau)\,\vz_{t+1,\text{clean}} + \sigma_z(\tau)\,\vep$
+\STATE $(\hat{\vz}_{t+1}, \hat{\va}_t) = \hat{f}_\theta^{\text{dyn}}(\vz_{t+1,\tau}, \mathcal{H}_t^z)$
+\STATE $\loss_z^{\text{latent}} = -\frac{d\lambda_z(\tau)}{d\tau}\,\frac{\exp\lambda_z(\tau)}{2}\,\|\vz_{t+1,\text{clean}} - \hat{\vz}_{t+1}\|^2 + \KL[p(\vz_{t+1,1}|\vo_{t+1})\|\mathcal{N}(\bm{0},\bm{I})]$
+\STATE $\loss_a = \|\va_t - \hat{\va}_t\|^2$
 \STATE \textbf{// Decoder loss}
 \STATE Sample $\tau' \sim \mathcal{U}(0,1)$, $\vep' \sim \mathcal{N}(\bm{0}, \bm{I})$, $\vep_z \sim \mathcal{N}(\bm{0}, \bm{I})$
-\STATE $\vz_{k+1,0} = \alpha_z(0)\,\vz_{k+1,\text{clean}} + \sigma_z(0)\,\vep_z$
-\STATE $\vx_{k+1,\tau'} = \alpha_x(\tau')\,\vx_{k+1} + \sigma_x(\tau')\,\vep'$
-\STATE $\loss_x = \frac{d\lambda_x(\tau')}{d\tau'}\,\frac{\exp\lambda_x(\tau')}{2}\,w_x(\lambda_x(\tau'))\,\|\vx_{k+1} - \hat{\vx}(\vx_{k+1,\tau'}, \vz_{k+1,0}, \theta)\|^2$
+\STATE $\vz_{t+1,0} = \alpha_z(0)\,\vz_{t+1,\text{clean}} + \sigma_z(0)\,\vep_z$
+\STATE $\vo_{t+1,\tau'} = \alpha_x(\tau')\,\vo_{t+1} + \sigma_x(\tau')\,\vep'$
+\STATE $\loss_x = \frac{d\lambda_x(\tau')}{d\tau'}\,\frac{\exp\lambda_x(\tau')}{2}\,w_x(\lambda_x(\tau'))\,\|\vo_{t+1} - \hat{\vo}(\vo_{t+1,\tau'}, \vz_{t+1,0}, \theta)\|^2$
 \STATE \textbf{// Combined loss}
-\STATE $\loss = \loss_z + c_{\text{lf}} \cdot \loss_x$
-\STATE Update $\theta$ by gradient descent on $\loss$
+\STATE $\loss_{\text{S1}} = \loss_z^{\text{latent}} + \gamma \cdot \loss_a + c_{\text{lf}} \cdot \loss_x$
+\STATE Update $\theta$ by gradient descent on $\loss_{\text{S1}}$
 \end{algorithmic}
 \end{algorithm}
 
@@ -314,139 +376,159 @@ The complete Stage~1 training procedure is given in \Cref{alg:stage1}.
 \label{sec:architecture}
 
 \textbf{Encoder $E_\theta$.}
-A ResNet-style convolutional encoder with channel progression $[128, 256, 512, 512]$, using 2 residual blocks per downsampling stage and 3 blocks in the final stage. The encoder takes $224 \times 224$ RGB images and produces $14 \times 14 \times c$ latents with $c = 32$ channels, yielding a $16\times$ spatial downsampling.
+A ResNet-style convolutional encoder with channel progression $[128, 256, 512, 512]$, using 2 residual blocks per downsampling stage and 3 blocks in the final stage. The encoder takes $224 \times 224$ RGB images and produces $14 \times 14 \times c$ latents with $c = 32$ channels, yielding $16\times$ spatial downsampling.
 
-\textbf{Dynamics prior $\hat{\vz}_\theta^{\text{dyn}}$.}
-A Vision Transformer (ViT) with 12 blocks and 768 hidden dimensions. The noisy future latent $\vz_{k+1,\tau}$ is patchified and used as the primary input sequence. The current latent $\vz_{k,\text{clean}}$ is provided via cross-attention. The action $\va_k$ is projected through a 2-layer MLP and concatenated as an additional token. The diffusion timestep $\tau$ is encoded via sinusoidal embeddings and added to the input.
+\textbf{Joint dynamics prior $\hat{f}_\theta^{\text{dyn}}$.}
+A causal Vision Transformer (ViT) with 12 blocks and 768 hidden dimensions. The input sequence is constructed as an interleaved observation-action history:
+\begin{equation}
+  \big[\text{patchify}(\vz_{t-H+1,\text{clean}}),\; \text{mlp}(\va_{t-H}),\; \ldots,\; \text{patchify}(\vz_{t,\text{clean}}),\; \text{patchify}(\vz_{t+1,\tau})\big].
+  \label{eq:prior_input}
+\end{equation}
+Each latent $\vz_{k,\text{clean}}$ is patchified into spatial tokens; each action $\va_k$ is projected through a 2-layer MLP into a single token. The diffusion timestep $\tau$ is encoded via sinusoidal embeddings and added to the noisy future latent tokens.
+
+The model uses \emph{frame-level causal attention}: tokens at time $k$ can attend to all tokens at times $\leq k$ but not future times (following DreamZero). The model has two output heads:
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Latent head:} Linear projection from the output tokens at the $\vz_{t+1,\tau}$ positions $\to \hat{\vz}_{t+1,\text{clean}} \in \R^{h \times w \times c}$.
+  \item \textbf{Action head:} MLP from the pooled output representation $\to \hat{\va}_t \in \R^{d_a}$.
+\end{itemize}
 
 \textbf{Diffusion decoder $D_\theta$.}
-A UViT architecture~\citep{hoogeboom2024uvit} with convolutional down/up-sampling stages $[128, 256, 512]$ and a central transformer with 8 blocks and 1024 channels. The decoder takes the noisy image $\vx_{k+1,\tau}$ and conditions on $\vz_{k+1,0}$ via adaptive layer normalization (AdaLN).
+A UViT architecture with convolutional down/up-sampling stages $[128, 256, 512]$ and a central transformer with 8 blocks and 1024 channels. The decoder takes the noisy image $\vo_{t+1,\tau}$ and conditions on $\vz_{t+1,0}$ via adaptive layer normalization (AdaLN).
 
 %=====================================================================
-\section{Stage 2: Autoregressive Policy on Frozen Latents}
+\section{Stage 2: Autoregressive Diffusion Transformer on Frozen Latents}
 \label{sec:stage2}
 %=====================================================================
 
-Once Stage~1 converges, we freeze the encoder $E_\theta$ and decoder $D_\theta$. The frozen encoder provides a \emph{physics-grounded visual vocabulary} in which each latent token represents geometry that actions causally affect.
+Once Stage~1 converges, we freeze the encoder $E_\theta$ and decoder $D_\theta$. The frozen encoder provides a \emph{physics-grounded visual vocabulary} that has been optimized to contain only action-predictable geometry.
 
-\subsection{Latent Extraction and Tokenization}
+For Stage~2, we train a larger autoregressive diffusion transformer that operates entirely in the frozen latent space, following the DreamZero architecture but on AC-UL latents instead of raw video.
 
-Given a trajectory $(\vx_0, \va_0, \vx_1, \va_1, \ldots, \vx_T)$, we extract clean latents:
+\subsection{Latent Trajectory Extraction}
+
+Given a trajectory $(\vo_0, \va_0, \vo_1, \va_1, \ldots, \vo_T)$, we extract clean latents:
 \begin{equation}
-  \vz_{k,\text{clean}} = E_\theta(\vx_k), \quad k = 0, 1, \ldots, T.
+  \vz_{k,\text{clean}} = E_\theta(\vo_k), \quad k = 0, 1, \ldots, T.
   \label{eq:latent_extract}
 \end{equation}
 
-Each latent $\vz_{k,\text{clean}} \in \R^{h \times w \times c}$ is flattened and linearly projected to produce a sequence of $N_z = h \times w$ tokens, each of dimension $d_{\text{model}}$:
+The trajectory in latent space becomes:
 \begin{equation}
-  \bm{h}_k^{(1)}, \ldots, \bm{h}_k^{(N_z)} = \text{LinearProj}(\text{flatten}(\vz_{k,\text{clean}})).
-  \label{eq:tokenize}
+  (\vz_{0,\text{clean}}, \va_0, \vz_{1,\text{clean}}, \va_1, \ldots, \vz_{T,\text{clean}}).
+  \label{eq:latent_trajectory}
 \end{equation}
 
-\subsection{Multimodal Sequence Construction}
+\subsection{Joint Video-Action Generation in Latent Space}
 
-We construct an interleaved sequence for the transformer:
+The Stage~2 model $\mathcal{T}_\phi$ is a diffusion transformer that takes the latent history and jointly generates the future latent and current action. We follow a chunk-wise autoregressive scheme inspired by DreamZero.
+
+\textbf{Chunk definition.}
+The trajectory is divided into chunks of $K$ latent frames. Each chunk $k$ contains:
 \begin{equation}
-  \mathcal{S} = \Big[\underbrace{\bm{l}_1, \ldots, \bm{l}_{N_l}}_{\text{language tokens}},\;
-  \underbrace{\bm{h}_{k-H}^{(1:N_z)}, \bm{s}_{k-H}, \va_{k-H}}_{\text{step } k-H},\;
-  \ldots,\;
-  \underbrace{\bm{h}_{k}^{(1:N_z)}, \bm{s}_{k}}_{\text{step } k}\Big],
-  \label{eq:sequence}
-\end{equation}
-where $\bm{l}_i$ are language instruction tokens (from a frozen text encoder), $\bm{s}_k \in \R^{d_s}$ is the proprioceptive state, and $H$ is the history length.
-
-\subsection{Training Objectives}
-
-The Stage~2 transformer $\mathcal{T}_\phi$ is trained with two autoregressive objectives:
-
-\textbf{Action prediction.}
-Given the sequence up to step $k$, predict the continuous action:
-\begin{equation}
-  \loss_{\text{action}} = \E\!\left[\|\va_k - \mathcal{T}_\phi^{\text{act}}(\mathcal{S}_{\leq k})\|^2\right].
-  \label{eq:action_loss}
+  \mathcal{C}_k = \big(\vz_{kK+1,\text{clean}}, \va_{kK}, \vz_{kK+2,\text{clean}}, \va_{kK+1}, \ldots, \vz_{(k+1)K,\text{clean}}, \va_{(k+1)K-1}\big).
+  \label{eq:chunk}
 \end{equation}
 
-\textbf{Next-latent prediction.}
-Predict the next clean latent (the ``world model'' head):
+\textbf{Flow-matching training.}
+For each chunk, we sample noise and construct interpolants for both the latent frames and actions:
+\begin{align}
+  \vz_{kK+j,\tau_k} &= (1-\tau_k)\,\vz_{kK+j,\text{clean}} + \tau_k\,\vep_z^{(j)}, \label{eq:flow_latent} \\
+  \va_{kK+j-1,\tau_k} &= (1-\tau_k)\,\va_{kK+j-1} + \tau_k\,\vep_a^{(j)}, \label{eq:flow_action}
+\end{align}
+where $\tau_k \sim \mathcal{U}(0,1)$ is sampled independently per chunk. The model predicts the velocity field:
 \begin{equation}
-  \loss_{\text{latent}} = \E\!\left[\|\vz_{k+1,\text{clean}} - \mathcal{T}_\phi^{\text{wm}}(\mathcal{S}_{\leq k}, \va_k)\|^2\right].
-  \label{eq:latent_pred_loss}
+  \loss_{\text{S2}} = \E\!\left[\frac{1}{K}\sum_{k} w(\tau_k)\,\left\|
+    \mathcal{T}_\phi\!\left([\vz_{\tau_k}^k, \va_{\tau_k}^k]; \mathcal{C}_{<k}, \bm{l}, \bm{s}, \tau_k\right)
+    - [\vz_{\text{clean}}^k - \vep_z^k,\; \va^k - \vep_a^k]
+  \right\|^2\right],
+  \label{eq:stage2_flow}
 \end{equation}
+where $\mathcal{C}_{<k}$ denotes the clean context from previous chunks, $\bm{l}$ is the language instruction embedding, and $\bm{s}$ is the proprioceptive state.
 
-The combined Stage~2 loss is:
-\begin{equation}
-  \loss_{\text{S2}} = \loss_{\text{action}} + \beta \cdot \loss_{\text{latent}},
-  \label{eq:stage2_loss}
-\end{equation}
-where $\beta$ controls the weight of the world-modeling auxiliary objective.
+\textbf{Teacher forcing.}
+During training, the model denoises the current chunk conditioned on \emph{clean} previous chunks via attention masking. This mirrors DreamZero's training but operates on compact AC-UL latents rather than high-dimensional video tokens.
+
+\subsection{Closed-Loop Inference}
+\label{sec:inference}
+
+During deployment, the model operates in a closed loop:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Encode:} $\vz_{t,\text{clean}} = E_\theta(\vo_t)$ --- encode the current observation with the frozen encoder.
+  \item \textbf{Generate:} $(\hat{\vz}_{t+1,\text{clean}}, \hat{\va}_t) = \mathcal{T}_\phi(\mathcal{H}_t^z)$ --- jointly generate next latent and current action via iterative denoising.
+  \item \textbf{Execute:} Apply $\hat{\va}_t$ to the robot.
+  \item \textbf{Observe:} Receive new observation $\vo_{t+1}$.
+  \item \textbf{Replace:} Compute $\vz_{t+1,\text{clean}} = E_\theta(\vo_{t+1})$ and replace $\hat{\vz}_{t+1,\text{clean}}$ in the KV cache with the ground-truth encoding. This prevents error accumulation.
+  \item \textbf{Repeat.}
+\end{enumerate}
 
 \subsection{Planning via Latent Rollouts}
 \label{sec:planning}
 
-The world model head enables Model Predictive Control (MPC) at test time. Given a goal image $\vx_g$ (or language instruction), we:
+For goal-conditioned tasks, the world model head enables planning without a separate planner. Given a goal observation $\vo_g$, we:
 
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
-  \item Encode the current observation: $\vz_{k,\text{clean}} = E_\theta(\vx_k)$.
-  \item Encode the goal: $\vz_{g,\text{clean}} = E_\theta(\vx_g)$.
-  \item Use the Cross-Entropy Method (CEM) to optimize action sequences:
+  \item Encode the goal: $\vz_{g,\text{clean}} = E_\theta(\vo_g)$.
+  \item Use the joint model to autoregressively generate latent-action rollouts \emph{without} ground-truth replacement:
   \begin{equation}
-    \va_{k:k+P}^* = \arg\min_{\va_{k:k+P}} \sum_{p=0}^{P-1} \|\hat{\vz}_{k+p+1,\text{clean}} - \vz_{g,\text{clean}}\|^2,
-    \label{eq:cem_planning}
+    (\hat{\vz}_{t+1}, \hat{\va}_t) \to (\hat{\vz}_{t+2}, \hat{\va}_{t+1}) \to \cdots \to (\hat{\vz}_{t+P}, \hat{\va}_{t+P-1}).
+    \label{eq:open_loop_rollout}
   \end{equation}
-  where $\hat{\vz}_{k+p+1,\text{clean}} = \mathcal{T}_\phi^{\text{wm}}(\mathcal{S}_{\leq k+p}, \va_{k+p})$ is the predicted latent from autoregressive rollout.
-  \item Execute the first action $\va_k^*$ and replan (receding horizon).
+  \item Score each rollout by the terminal distance: $d = \|\hat{\vz}_{t+P,\text{clean}} - \vz_{g,\text{clean}}\|^2$.
+  \item Use CEM or best-of-$N$ sampling to select the best action sequence.
+  \item Execute the first action and replan (receding horizon).
 \end{enumerate}
 
-Because the latents encode only action-relevant geometry, the planning cost function (\Cref{eq:cem_planning}) directly measures progress toward the goal in terms of physical state change, rather than pixel similarity.
+Because the latents encode only action-relevant geometry, the planning cost function directly measures progress toward the goal in terms of physical state change.
 
 %=====================================================================
 \section{Theoretical Analysis}
 \label{sec:theory}
 %=====================================================================
 
-\subsection{AC-UL as a Variational Bound on Transition Likelihood}
+\subsection{AC-UL as a Variational Bound on Joint Transition Likelihood}
 
-We can interpret the AC-UL objective as a variational bound on the conditional likelihood of the future observation given the current state and action.
-
-\begin{proposition}[AC-UL Bound]
-The AC-UL loss provides an upper bound on the negative log-likelihood of the state transition:
+\begin{proposition}[AC-UL Joint Bound]
+The AC-UL Stage~1 loss provides an upper bound on the negative log-likelihood of the joint observation-action transition:
 \begin{equation}
-  -\log p_\theta(\vx_{k+1} \mid \vx_k, \va_k) \leq \loss_z(\theta) + c_{\text{lf}} \cdot \loss_x(\theta),
+  -\log p_\theta(\vo_{t+1}, \va_t \mid \mathcal{H}_t) \leq \loss_z^{\text{latent}}(\theta) + \gamma \cdot \loss_a(\theta) + c_{\text{lf}} \cdot \loss_x(\theta).
   \label{eq:acul_bound}
 \end{equation}
-where $\loss_z$ is the action-conditioned prior loss (\Cref{eq:ac_prior_loss}) and $\loss_x$ is the decoder loss (\Cref{eq:ac_decoder_loss}).
 \end{proposition}
 
 \begin{proof}
-Starting from the ELBO (\Cref{eq:elbo}) applied to the conditional model:
+Starting from the ELBO applied to the conditional model with latent $\vz_{t+1,0}$:
 \begin{align}
-  -\log p_\theta(\vx_{k+1} \mid \vx_k, \va_k)
-  &\leq \E_{\vz_{k+1,0}}\!\Big[-\log p_\theta(\vx_{k+1} \mid \vz_{k+1,0})\Big] + \KL\!\Big[p(\vz_{k+1,0} \mid \vx_{k+1}) \;\Big\|\; p_\theta(\vz_{k+1,0} \mid \vz_{k,\text{clean}}, \va_k)\Big] \\
-  &\leq \loss_x(\theta) + \loss_z(\theta),
+  -\log p_\theta(\vo_{t+1}, \va_t \mid \mathcal{H}_t)
+  &\leq \E_{\vz_{t+1,0}}\!\Big[-\log p_\theta(\vo_{t+1} \mid \vz_{t+1,0})\Big] \nonumber \\
+  &\quad + \KL\!\Big[p(\vz_{t+1,0} \mid \vo_{t+1}) \;\Big\|\; p_\theta(\vz_{t+1,0} \mid \mathcal{H}_t^z)\Big] \nonumber \\
+  &\quad - \E_{\vz_{t+1,0}}\!\Big[\log p_\theta(\va_t \mid \vz_{t+1,0}, \mathcal{H}_t^z)\Big].
   \label{eq:proof_step}
 \end{align}
-where the second inequality applies the diffusion KL bounds (\Cref{eq:ac_prior_loss,eq:ac_decoder_loss}) to each term. The loss factor $c_{\text{lf}}$ loosens the bound but improves optimization by preventing posterior collapse.
+Applying the diffusion bounds (\Cref{eq:ac_prior_loss,eq:ac_decoder_loss}) to the first two terms and using $-\log p_\theta(\va_t | \cdot) \leq \gamma \|\va_t - \hat{\va}_t\|^2$ (Gaussian action likelihood) for the third term yields the result. The loss factor $c_{\text{lf}}$ loosens the bound but improves optimization by preventing posterior collapse.
 \end{proof}
 
 \subsection{Information-Theoretic Interpretation}
 
-The rate-distortion perspective clarifies the role of each component:
-
 \textbf{Rate (prior loss).}
-The prior loss $\loss_z$ upper-bounds the mutual information between the encoder output and the data, \emph{beyond what is predictable from the action}:
+The prior loss $\loss_z^{\text{latent}}$ upper-bounds the mutual information between the encoder output and the data, \emph{beyond what is predictable from the history}:
 \begin{equation}
-  \loss_z \geq I(\vz_{k+1,\text{clean}}; \vx_{k+1} \mid \vz_{k,\text{clean}}, \va_k).
+  \loss_z^{\text{latent}} \geq I(\vz_{t+1,\text{clean}}; \vo_{t+1} \mid \mathcal{H}_t^z).
   \label{eq:rate_bound}
 \end{equation}
-This is the ``cost'' of encoding information that the action-conditioned prior cannot predict. Minimizing $\loss_z$ pushes the encoder to only encode action-predictable content.
 
-\textbf{Distortion (decoder loss).}
-The decoder loss $\loss_x$ measures reconstruction quality. Better encoding (more information in $\vz_{k+1,0}$) reduces $\loss_x$ but increases $\loss_z$ for unpredictable content.
+\textbf{Action regularization.}
+The action loss $\loss_a$ provides an additional inductive bias. The prior must recover the action from the latent transition. This means the latent must encode the \emph{causal effect} of the action on the scene:
+\begin{equation}
+  \loss_a \geq -I(\va_t; \vz_{t+1,\text{clean}} \mid \mathcal{H}_t^z) + \text{const},
+  \label{eq:action_info}
+\end{equation}
+so minimizing $\loss_a$ maximizes the action information in the latent transition.
 
 \textbf{Equilibrium.}
-At convergence, the encoder achieves the optimal rate-distortion trade-off for action-predictable information:
+At convergence, the encoder achieves an optimal trade-off: it maximizes history-predictable, action-relevant information while minimizing unpredictable content:
 \begin{equation}
-  \vz_{k+1,\text{clean}}^* = \arg\min_{\vz} \Big[\underbrace{I(\vz; \vx_{k+1} \mid \vz_{k,\text{clean}}, \va_k)}_{\text{rate: unpredictable bits}} + c_{\text{lf}} \cdot \underbrace{D(\vx_{k+1}, \hat{\vx}_\theta)}_{\text{distortion: reconstruction error}}\Big].
+  \vz_{t+1,\text{clean}}^* = \arg\min_{\vz} \Big[\underbrace{I(\vz; \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{rate}} + c_{\text{lf}} \cdot \underbrace{D(\vo_{t+1}, \hat{\vo}_\theta)}_{\text{distortion}} - \gamma \cdot \underbrace{I(\va_t; \vz \mid \mathcal{H}_t^z)}_{\text{action info}}\Big].
   \label{eq:rd_tradeoff}
 \end{equation}
 
@@ -455,65 +537,61 @@ At convergence, the encoder achieves the optimal rate-distortion trade-off for a
 \label{sec:experiments}
 %=====================================================================
 
-We evaluate AC-UL across three experimental settings: (1)~model-predictive planning, (2)~imitation learning with latent world modeling, and (3)~real-world video prediction. We compare against both pixel-reconstruction world models and frozen-feature approaches.
+We evaluate AC-UL across three experimental settings: (1)~closed-loop planning via latent rollouts, (2)~imitation learning with joint world-action modeling, and (3)~real-world video prediction.
 
 \subsection{Datasets and Benchmarks}
 \label{sec:datasets}
 
 \textbf{CALVIN}~\citep{mees2022calvin}.
-A simulated long-horizon manipulation benchmark with 34 tasks (e.g., open drawer, push block, rotate lever). The dataset provides RGB observations ($200 \times 200$), 7-DoF Franka Panda actions (end-effector displacement + gripper), and language instructions. We use the ABCD$\to$D split with 24 hours of play data ($\sim$600K transitions).
+A simulated long-horizon manipulation benchmark with 34 tasks (e.g., open drawer, push block, rotate lever). Provides RGB observations ($200 \times 200$), 7-DoF Franka Panda actions, and language instructions. We use the ABCD$\to$D split with ${\sim}600$K transitions and ${\sim}24$ hours of play data.
 
 \textbf{LIBERO}~\citep{liu2024libero}.
-A suite of 130 manipulation tasks across 5 task suites (LIBERO-Spatial, LIBERO-Object, LIBERO-Goal, LIBERO-Long, LIBERO-90), featuring diverse spatial relations and long-horizon reasoning. Each task has 50 demonstrations. Observations are $128 \times 128$ RGB with 7-DoF actions.
-
-\textbf{RLBench}~\citep{james2020rlbench}.
-18 tasks with multi-view RGB-D observations and 7-DoF actions. We use the 100-demonstration variant for each task and evaluate with front-camera RGB only to match our single-view setup.
+A suite of 130 manipulation tasks across 5 task suites (Spatial, Object, Goal, Long, 90), featuring diverse spatial relations and long-horizon reasoning. Each task has 50 demonstrations with $128 \times 128$ RGB and 7-DoF actions.
 
 \textbf{DROID}~\citep{khazatsky2024droid}.
-A large-scale real-world robot manipulation dataset with $\sim$76K trajectories collected across 564 scenes on Franka Panda robots. Provides multi-view RGB ($320 \times 240$), 7-DoF actions, and natural language annotations. We use this for video prediction evaluation and real-world generalization experiments.
+A large-scale real-world dataset with ${\sim}76$K trajectories across 564 scenes on Franka Panda robots. Provides multi-view RGB ($320 \times 240$), 7-DoF actions, and language annotations. We use this for video prediction and cross-embodiment evaluation.
 
 \textbf{Bridge-v2}~\citep{walke2023bridgedata}.
-A real-world dataset with $\sim$60K trajectories on a WidowX robot. Provides RGB observations and 7-DoF actions across diverse kitchen manipulation tasks. Used for cross-embodiment transfer experiments.
+A real-world dataset with ${\sim}60$K trajectories on a WidowX robot with 7-DoF actions across kitchen tasks. Used for cross-embodiment transfer experiments.
 
 \subsection{Baselines}
 \label{sec:baselines}
 
-We compare against the following methods:
-
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \textbf{DreamerV3}~\citep{hafner2023dreamerv3}: Categorical latent world model with actor-critic planning. Trained from scratch on each benchmark.
-  \item \textbf{DINO-WM}~\citep{zhou2024dinowm}: Frozen DINOv2 features with ViT transition model and CEM planning. Represents the frozen-feature paradigm.
-  \item \textbf{FLARE}~\citep{nvidia2025flare}: Diffusion transformer VLA with future latent alignment using SigLIP-2 features. State-of-the-art on RoboCasa and GR-1 benchmarks.
-  \item \textbf{TD-MPC2}~\citep{hansen2024tdmpc2}: Decoder-free latent dynamics model with temporal difference learning. Requires reward signal.
-  \item \textbf{IRIS}~\citep{micheli2023transformers}: Discrete autoencoder + GPT-style world model with token-level prediction.
-  \item \textbf{SD-Latent WM}: Stable Diffusion VAE encoder (frozen) + ViT dynamics model. Tests whether standard latent diffusion features suffice for world modeling.
-  \item \textbf{Pixel MSE WM}: Direct pixel-space world model with MSE loss. Lower bound baseline.
+  \item \textbf{DreamerV3}~\citep{hafner2023dreamerv3}: Categorical latent world model with actor-critic planning.
+  \item \textbf{DreamZero}~\citep{dreamzero2025}: Autoregressive diffusion transformer for joint video-action generation in pixel space. Direct comparison for the benefit of AC-UL latents vs.\ raw pixels.
+  \item \textbf{DINO-WM}~\citep{zhou2024dinowm}: Frozen DINOv2 features with ViT transition model and CEM planning.
+  \item \textbf{FLARE}~\citep{nvidia2025flare}: Diffusion transformer VLA with future latent alignment using SigLIP-2 features.
+  \item \textbf{TD-MPC2}~\citep{hansen2024tdmpc2}: Decoder-free latent dynamics model with temporal difference learning.
+  \item \textbf{IRIS}~\citep{micheli2023transformers}: Discrete autoencoder + GPT-style world model.
+  \item \textbf{SD-Latent WM}: Stable Diffusion VAE encoder (frozen) + ViT dynamics model.
 \end{itemize}
 
-\subsection{Experiment 1: Model-Predictive Planning}
+\subsection{Experiment 1: Closed-Loop Planning via Latent Rollouts}
 \label{sec:exp_planning}
 
 \subsubsection{Setup}
 
-We evaluate goal-conditioned planning using CEM optimization in the learned latent space. The agent receives a current observation $\vx_k$ and a goal image $\vx_g$, and must find an action sequence that reaches the goal. We follow the DINO-WM evaluation protocol:
-\begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \textbf{CEM parameters:} Population size $N = 512$, elite fraction $K = 64$, 5 CEM iterations, planning horizon $P = 10$.
-  \item \textbf{Receding horizon:} Execute first 3 actions, then replan.
-  \item \textbf{Metrics:} Success rate (SR) for discrete tasks, final distance for continuous tasks, LPIPS between achieved and goal images.
-\end{itemize}
+We evaluate goal-conditioned planning using the Stage~2 model's latent rollout capability (\Cref{sec:planning}). The agent receives a current observation $\vo_t$ and a goal image $\vo_g$, and must generate action sequences that reach the goal.
+
+\textbf{Planning method.}
+We use best-of-$N$ sampling: generate $N = 256$ latent-action rollouts from the joint model, score each by terminal distance to the goal latent, select the best trajectory, execute the first $K$ actions, and replan.
+
+\textbf{Metrics.}
+Success rate (SR) for discrete tasks; LPIPS between achieved and goal observations.
 
 \subsubsection{Results}
 
 \begin{table}[t]
 \centering
-\caption{Goal-conditioned planning performance (Success Rate \%). AC-UL uses the Stage~1 dynamics prior for CEM planning. Higher is better.}
+\caption{Goal-conditioned planning performance (Success Rate \%). AC-UL generates action sequences via latent rollouts from the joint video-action model.}
 \label{tab:planning}
 \begin{tabular}{lcccccc}
 \toprule
 \textbf{Method} & \textbf{CALVIN-1} & \textbf{CALVIN-3} & \textbf{CALVIN-5} & \textbf{LIBERO-S} & \textbf{LIBERO-G} & \textbf{Avg.} \\
 \midrule
-Pixel MSE WM      & -- & -- & -- & -- & -- & -- \\
 DreamerV3          & -- & -- & -- & -- & -- & -- \\
+DreamZero (pixel)  & -- & -- & -- & -- & -- & -- \\
 IRIS               & -- & -- & -- & -- & -- & -- \\
 DINO-WM            & -- & -- & -- & -- & -- & -- \\
 TD-MPC2            & -- & -- & -- & -- & -- & -- \\
@@ -526,32 +604,32 @@ AC-UL (ours)       & -- & -- & -- & -- & -- & -- \\
 
 \begin{table}[t]
 \centering
-\caption{Planning with visual generalization: Novel object shapes and configurations not seen during training. Success Rate (\%).}
+\caption{Planning with visual generalization: novel object shapes and configurations not seen during training. Success Rate (\%).}
 \label{tab:planning_generalization}
 \begin{tabular}{lccc}
 \toprule
-\textbf{Method} & \textbf{CALVIN-Novel} & \textbf{LIBERO-Novel} & \textbf{RLBench-Novel} \\
+\textbf{Method} & \textbf{CALVIN-Novel} & \textbf{LIBERO-Novel} & \textbf{Avg.} \\
 \midrule
 DreamerV3          & -- & -- & -- \\
+DreamZero (pixel)  & -- & -- & -- \\
 DINO-WM            & -- & -- & -- \\
-SD-Latent WM       & -- & -- & -- \\
 AC-UL (ours)       & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Experiment 2: Imitation Learning with Latent World Modeling}
+\subsection{Experiment 2: Imitation Learning with Joint World-Action Modeling}
 \label{sec:exp_imitation}
 
 \subsubsection{Setup}
 
-We compare AC-UL's Stage~2 policy against FLARE and other VLA baselines. The Stage~2 transformer uses the frozen AC-UL encoder and is trained on demonstration trajectories with the combined action prediction + next-latent prediction loss (\Cref{eq:stage2_loss}).
+We compare AC-UL's Stage~2 policy (the action output from the joint model) against FLARE and other VLA baselines on imitation learning benchmarks.
 
 \textbf{Architecture.}
-The Stage~2 transformer is a 12-layer, 768-dim transformer with 12 attention heads. Language instructions are encoded with a frozen CLIP text encoder. The history length is $H = 3$. Action prediction uses flow matching with $K = 4$ denoising steps.
+Stage~2 uses a 12-layer, 768-dim diffusion transformer with 12 attention heads, chunk size $K = 2$ latent frames. Language instructions are encoded with frozen CLIP. Flow-matching with $K_{\text{denoise}} = 4$ denoising steps at inference.
 
-\textbf{Training.}
-Batch size 256, learning rate $3 \times 10^{-4}$ with cosine schedule, 100K steps on 8 GPUs.
+\textbf{Closed-loop evaluation.}
+The model generates actions in closed loop: at each step, the predicted latent is replaced with the ground-truth encoding of the new observation in the KV cache.
 
 \textbf{Metrics.}
 Task success rate averaged over 3 seeds with 20 evaluation episodes per task.
@@ -560,7 +638,7 @@ Task success rate averaged over 3 seeds with 20 evaluation episodes per task.
 
 \begin{table}[t]
 \centering
-\caption{Imitation learning performance (Success Rate \%). AC-UL Stage~2 vs.\ FLARE and other VLA baselines. All methods use 50 demonstrations per task.}
+\caption{Imitation learning performance (Success Rate \%). AC-UL Stage~2 generates actions from the joint video-action model. All methods use 50 demos/task.}
 \label{tab:imitation}
 \begin{tabular}{lcccccc}
 \toprule
@@ -569,18 +647,18 @@ Task success rate averaged over 3 seeds with 20 evaluation episodes per task.
 Diffusion Policy       & -- & -- & -- & -- & -- & -- \\
 FLARE (policy only)    & -- & -- & -- & -- & -- & -- \\
 FLARE                  & -- & -- & -- & -- & -- & -- \\
-SD-Latent + Transformer & -- & -- & -- & -- & -- & -- \\
+DreamZero (pixel)      & -- & -- & -- & -- & -- & -- \\
 DINO-WM + BC           & -- & -- & -- & -- & -- & -- \\
 \midrule
 AC-UL Stage~2 (ours)   & -- & -- & -- & -- & -- & -- \\
-AC-UL Stage~2 + planning (ours) & -- & -- & -- & -- & -- & -- \\
+AC-UL + planning (ours) & -- & -- & -- & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{table}[t]
 \centering
-\caption{CALVIN long-horizon evaluation. Average number of tasks completed in a chain of 5 sequential tasks (higher is better). All methods conditioned on language instructions.}
+\caption{CALVIN long-horizon evaluation. Average number of tasks completed in a chain of 5 sequential tasks. Language-conditioned.}
 \label{tab:calvin}
 \begin{tabular}{lccccc}
 \toprule
@@ -589,6 +667,7 @@ AC-UL Stage~2 + planning (ours) & -- & -- & -- & -- & -- & -- \\
 HULC               & -- & -- & -- & -- & -- \\
 Diffusion Policy    & -- & -- & -- & -- & -- \\
 FLARE               & -- & -- & -- & -- & -- \\
+DreamZero (pixel)   & -- & -- & -- & -- & -- \\
 \midrule
 AC-UL Stage~2 (ours) & -- & -- & -- & -- & -- \\
 \bottomrule
@@ -599,7 +678,7 @@ AC-UL Stage~2 (ours) & -- & -- & -- & -- & -- \\
 
 \begin{table}[t]
 \centering
-\caption{Data efficiency on LIBERO-Spatial. Success Rate (\%) with varying number of demonstrations per task.}
+\caption{Data efficiency on LIBERO-Spatial. Success Rate (\%) with varying demos per task.}
 \label{tab:data_efficiency}
 \begin{tabular}{lcccc}
 \toprule
@@ -607,36 +686,38 @@ AC-UL Stage~2 (ours) & -- & -- & -- & -- & -- \\
 \midrule
 Diffusion Policy    & -- & -- & -- & -- \\
 FLARE               & -- & -- & -- & -- \\
+DreamZero (pixel)   & -- & -- & -- & -- \\
 AC-UL Stage~2 (ours) & -- & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Experiment 3: Real-World Video Prediction}
+\subsection{Experiment 3: Real-World Video-Action Prediction}
 \label{sec:exp_video}
 
 \subsubsection{Setup}
 
-We evaluate the quality of learned latents for video prediction on the DROID dataset. We train the Stage~1 AC-UL model on DROID training split and evaluate:
+We evaluate the quality of joint video-action prediction on the DROID dataset. We train Stage~1 on DROID training split, then evaluate:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item \textbf{Latent prediction accuracy:} MSE between predicted and ground-truth latents over multi-step rollouts (1, 5, 10, 20 steps).
-  \item \textbf{Decoded video quality:} FVD, LPIPS, SSIM, PSNR of decoded predictions vs.\ ground truth frames.
-  \item \textbf{Action-relevant focus:} We measure the correlation between latent change magnitude $\|\Delta \vz\|$ and action magnitude $\|\va_k\|$ to verify that latents encode action-relevant information.
+  \item \textbf{Action prediction accuracy:} MSE between predicted and ground-truth actions.
+  \item \textbf{Decoded video quality:} FVD, LPIPS, SSIM, PSNR of decoded predictions vs.\ ground truth.
+  \item \textbf{Action-relevance metric:} Correlation between $\|\Delta \vz_k\|$ and $\|\va_k\|$.
 \end{itemize}
 
 \subsubsection{Results}
 
 \begin{table}[t]
 \centering
-\caption{Video prediction quality on DROID test set. Multi-step prediction from ground-truth initial frame and action sequence.}
+\caption{Video prediction quality on DROID test set. Multi-step prediction from ground-truth initial observation and open-loop rollout.}
 \label{tab:video_pred}
 \begin{tabular}{lcccc}
 \toprule
 \textbf{Method} & \textbf{FVD$\downarrow$} & \textbf{LPIPS$\downarrow$} & \textbf{SSIM$\uparrow$} & \textbf{PSNR$\uparrow$} \\
 \midrule
-Pixel MSE WM        & -- & -- & -- & -- \\
-SD-Latent WM         & -- & -- & -- & -- \\
 DreamerV3            & -- & -- & -- & -- \\
+DreamZero (pixel)    & -- & -- & -- & -- \\
+SD-Latent WM         & -- & -- & -- & -- \\
 DINO-WM              & -- & -- & -- & -- \\
 \midrule
 AC-UL (ours)         & -- & -- & -- & -- \\
@@ -646,15 +727,17 @@ AC-UL (ours)         & -- & -- & -- & -- \\
 
 \begin{table}[t]
 \centering
-\caption{Latent prediction MSE over rollout horizon on DROID test set. Lower is better.}
+\caption{Latent prediction MSE and action prediction MSE over rollout horizon on DROID test set.}
 \label{tab:latent_rollout}
-\begin{tabular}{lcccc}
+\begin{tabular}{lcccc|cccc}
 \toprule
-\textbf{Method} & \textbf{1-step} & \textbf{5-step} & \textbf{10-step} & \textbf{20-step} \\
+& \multicolumn{4}{c|}{\textbf{Latent MSE$\downarrow$}} & \multicolumn{4}{c}{\textbf{Action MSE$\downarrow$}} \\
+\textbf{Method} & \textbf{1} & \textbf{5} & \textbf{10} & \textbf{20} & \textbf{1} & \textbf{5} & \textbf{10} & \textbf{20} \\
 \midrule
-SD-Latent WM         & -- & -- & -- & -- \\
-DINO-WM              & -- & -- & -- & -- \\
-AC-UL (ours)         & -- & -- & -- & -- \\
+SD-Latent WM         & -- & -- & -- & -- & -- & -- & -- & -- \\
+DINO-WM              & -- & -- & -- & -- & -- & -- & -- & -- \\
+DreamZero (pixel)    & -- & -- & -- & -- & -- & -- & -- & -- \\
+AC-UL (ours)         & -- & -- & -- & -- & -- & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -664,17 +747,13 @@ AC-UL (ours)         & -- & -- & -- & -- \\
 
 \subsubsection{Setup}
 
-We test whether AC-UL latents transfer across robot embodiments. We train Stage~1 on a combined dataset of DROID (Franka Panda) and Bridge-v2 (WidowX), then evaluate:
-\begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item Whether a single encoder learns embodiment-agnostic physics representations.
-  \item Whether Stage~2 policies trained on one embodiment's data transfer to another.
-\end{itemize}
+We train Stage~1 on combined DROID (Franka) + Bridge-v2 (WidowX) data and evaluate whether a single encoder learns embodiment-agnostic physics representations.
 
 \subsubsection{Results}
 
 \begin{table}[t]
 \centering
-\caption{Cross-embodiment transfer. Stage~1 trained on combined DROID+Bridge-v2, Stage~2 trained on target embodiment only. Success Rate (\%).}
+\caption{Cross-embodiment transfer. Stage~1 trained on combined data, Stage~2 trained on target embodiment. Success Rate (\%).}
 \label{tab:cross_embodiment}
 \begin{tabular}{lccc}
 \toprule
@@ -682,6 +761,7 @@ We test whether AC-UL latents transfer across robot embodiments. We train Stage~
 \midrule
 Separate encoders    & -- & -- & -- \\
 DINO-WM (shared)     & -- & -- & -- \\
+DreamZero (pixel, shared) & -- & -- & -- \\
 AC-UL (shared, ours) & -- & -- & -- \\
 \bottomrule
 \end{tabular}
@@ -690,93 +770,96 @@ AC-UL (shared, ours) & -- & -- & -- \\
 \subsection{Ablation Studies}
 \label{sec:ablations}
 
-\subsubsection{Effect of Action Conditioning in the Prior}
+\subsubsection{Effect of History-Conditioned Joint Prior}
 
 \begin{table}[t]
 \centering
-\caption{Ablation: effect of action conditioning in the prior. LIBERO-Spatial planning success rate (\%).}
-\label{tab:ablation_action}
+\caption{Ablation: prior conditioning variants. LIBERO-Spatial planning SR (\%).}
+\label{tab:ablation_prior}
 \begin{tabular}{lcc}
 \toprule
-\textbf{Prior Conditioning} & \textbf{Planning SR} & \textbf{Latent Bitrate (bpd)} \\
+\textbf{Prior Variant} & \textbf{Planning SR} & \textbf{Bitrate (bpd)} \\
 \midrule
-Unconditional (standard UL)    & -- & -- \\
-State-only ($\vz_{k,\text{clean}}$)  & -- & -- \\
-Action-only ($\va_k$)         & -- & -- \\
-Full AC-UL ($\vz_{k,\text{clean}}, \va_k$) & -- & -- \\
+Unconditional (standard UL)                      & -- & -- \\
+Single-step, no action: $\vz_t \to \vz_{t+1}$   & -- & -- \\
+Single-step: $(\vz_t, \va_t) \to \vz_{t+1}$     & -- & -- \\
+History, latent only: $\mathcal{H}_t^z \to \vz_{t+1}$ & -- & -- \\
+History, joint (AC-UL): $\mathcal{H}_t^z \to (\vz_{t+1}, \va_t)$ & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsubsection{Effect of Loss Factor}
+\subsubsection{Effect of Action Loss Weight}
 
 \begin{table}[t]
 \centering
-\caption{Ablation: loss factor $c_{\text{lf}}$ on LIBERO-Spatial. Planning SR (\%) and reconstruction PSNR.}
-\label{tab:ablation_lf}
+\caption{Ablation: action loss weight $\gamma$ on LIBERO-Spatial.}
+\label{tab:ablation_gamma}
 \begin{tabular}{lccc}
 \toprule
-$c_{\text{lf}}$ & \textbf{Planning SR} & \textbf{PSNR} & \textbf{Bitrate (bpd)} \\
+$\gamma$ & \textbf{Planning SR} & \textbf{Action MSE} & \textbf{Latent MSE} \\
 \midrule
-1.0  & -- & -- & -- \\
-1.3  & -- & -- & -- \\
-1.5  & -- & -- & -- \\
-1.7  & -- & -- & -- \\
-2.0  & -- & -- & -- \\
+0.0 (no action loss)  & -- & -- & -- \\
+0.1                    & -- & -- & -- \\
+0.5                    & -- & -- & -- \\
+1.0                    & -- & -- & -- \\
+2.0                    & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsubsection{Effect of Minimum Noise Level}
+\subsubsection{Effect of History Length}
 
 \begin{table}[t]
 \centering
-\caption{Ablation: minimum noise level $\lambda_z(0)$ on LIBERO-Spatial. Planning SR (\%).}
-\label{tab:ablation_noise}
+\caption{Ablation: history length $H$ on LIBERO-Spatial. Planning SR (\%).}
+\label{tab:ablation_history}
 \begin{tabular}{lccc}
 \toprule
-$\lambda_z(0)$ & $\sigma_z(0)$ & \textbf{Planning SR} & \textbf{rFID} \\
+$H$ & \textbf{Planning SR} & \textbf{Action MSE} & \textbf{Latent MSE} \\
 \midrule
-3   & 0.18  & -- & -- \\
-5   & 0.08  & -- & -- \\
-7   & 0.03  & -- & -- \\
-10  & 0.007 & -- & -- \\
+1 (Markov)  & -- & -- & -- \\
+2           & -- & -- & -- \\
+4           & -- & -- & -- \\
+8           & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsubsection{Stage 2 World Model Weight}
+\subsubsection{Effect of Loss Factor and Noise Level}
 
 \begin{table}[t]
 \centering
-\caption{Ablation: world model loss weight $\beta$ in Stage~2 on LIBERO-Spatial. Success Rate (\%).}
-\label{tab:ablation_beta}
-\begin{tabular}{lcc}
+\caption{Ablation: loss factor $c_{\text{lf}}$ and minimum noise level $\lambda_z(0)$ on LIBERO-Spatial.}
+\label{tab:ablation_lf_noise}
+\begin{tabular}{lcccc}
 \toprule
-$\beta$ & \textbf{Policy SR (no plan)} & \textbf{Policy SR (with plan)} \\
+$c_{\text{lf}}$ & $\lambda_z(0)$ & \textbf{Planning SR} & \textbf{PSNR} & \textbf{Bitrate} \\
 \midrule
-0.0 (no WM)  & -- & -- \\
-0.1          & -- & -- \\
-0.5          & -- & -- \\
-1.0          & -- & -- \\
+1.3 & 5   & -- & -- & -- \\
+1.5 & 5   & -- & -- & -- \\
+1.7 & 5   & -- & -- & -- \\
+1.5 & 3   & -- & -- & -- \\
+1.5 & 7   & -- & -- & -- \\
+1.5 & 10  & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsubsection{Latent Channel Count}
+\subsubsection{AC-UL Latents vs.\ Pixel Space for DreamZero}
 
 \begin{table}[t]
 \centering
-\caption{Ablation: number of latent channels $c$ on LIBERO-Spatial.}
-\label{tab:ablation_channels}
-\begin{tabular}{lccc}
+\caption{Direct comparison: DreamZero architecture trained on AC-UL latents vs.\ raw pixels. Same model size and training budget. LIBERO success rate (\%).}
+\label{tab:ablation_latent_vs_pixel}
+\begin{tabular}{lccccc}
 \toprule
-\textbf{Channels} & \textbf{Planning SR} & \textbf{PSNR} & \textbf{Bitrate (bpd)} \\
+\textbf{Input Space} & \textbf{LIBERO-S} & \textbf{LIBERO-O} & \textbf{LIBERO-G} & \textbf{Training FLOPs} & \textbf{Inference (ms)} \\
 \midrule
-8   & -- & -- & -- \\
-16  & -- & -- & -- \\
-32  & -- & -- & -- \\
-64  & -- & -- & -- \\
+Pixels (DreamZero)   & -- & -- & -- & -- & -- \\
+SD latents           & -- & -- & -- & -- & -- \\
+DINO features        & -- & -- & -- & -- & -- \\
+AC-UL latents (ours) & -- & -- & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -791,38 +874,38 @@ $\beta$ & \textbf{Policy SR (no plan)} & \textbf{Policy SR (with plan)} \\
 To verify that AC-UL latents focus on action-relevant geometry, we analyze:
 
 \textbf{Latent sensitivity to actions.}
-We compute the Jacobian $\partial \vz_{k+1,\text{clean}} / \partial \va_k$ and visualize which spatial latent positions are most sensitive to action perturbations. We expect high sensitivity near the gripper and manipulated objects, and low sensitivity in background regions.
+We compute the Jacobian $\partial \vz_{t+1,\text{clean}} / \partial \va_t$ and visualize which spatial positions are most sensitive to action perturbations. We expect high sensitivity near the gripper and manipulated objects.
 
 \textbf{Latent change vs.\ action magnitude.}
-We measure the Pearson correlation between $\|\Delta \vz_k\| = \|\vz_{k+1,\text{clean}} - \vz_{k,\text{clean}}\|$ and $\|\va_k\|$. A high correlation confirms that latent dynamics are driven by actions rather than irrelevant visual changes.
+We measure the Pearson correlation between $\|\Delta \vz_t\|$ and $\|\va_t\|$. High correlation confirms that latent dynamics are action-driven.
 
-\textbf{Reconstruction of action-irrelevant content.}
-We compare the PSNR of the decoded latent on (a) the manipulated object region and (b) the background. AC-UL should have higher PSNR on the object (action-relevant) and lower PSNR on the background (discarded by the encoder), compared to standard UL.
+\textbf{Closed-loop vs.\ open-loop rollouts.}
+Because AC-UL latents are compact and action-focused, we expect open-loop rollouts (without ground-truth replacement) to degrade more gracefully than pixel-space rollouts, as there is less irrelevant variation to compound.
 
-\subsection{Comparison with Frozen Features}
+\subsection{Comparison with DreamZero}
 
-AC-UL and DINO-WM represent two philosophies:
+AC-UL and DreamZero share the autoregressive joint video-action generation paradigm but differ fundamentally in representation:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \textbf{DINO-WM:} Use a powerful, general-purpose frozen encoder and learn dynamics in its feature space. Advantages: strong visual priors, no training instability. Disadvantages: features are not optimized for action prediction; patch features may encode action-irrelevant texture.
-  \item \textbf{AC-UL:} Learn the encoder end-to-end with the dynamics prior. Advantages: features are mathematically optimized for action-predictable content; latent space is compact and informative. Disadvantages: requires Stage~1 training; encoder may overfit to training distribution.
+  \item \textbf{DreamZero} operates on VAE-compressed video tokens. The VAE is trained for generic visual reconstruction, not action-relevant content.
+  \item \textbf{AC-UL} operates on latents specifically optimized to discard action-irrelevant information. This should yield (a) more compact sequences (fewer tokens per frame), (b) better long-horizon rollout fidelity, and (c) faster inference.
 \end{itemize}
 
 \subsection{Comparison with FLARE}
 
-FLARE adds future latent prediction as an auxiliary loss to a VLA, using frozen SigLIP-2 features as prediction targets. AC-UL differs fundamentally:
+FLARE adds future latent prediction as an auxiliary loss using frozen SigLIP-2 features. AC-UL differs:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item FLARE's targets (SigLIP-2 embeddings) are not optimized for action prediction---they encode general visual semantics.
-  \item AC-UL's targets (frozen AC-UL latents) are \emph{specifically trained} to contain only action-predictable geometry.
-  \item FLARE requires the encoder and future prediction to be trained jointly with the policy. AC-UL separates representation learning (Stage~1) from policy learning (Stage~2), potentially enabling better scaling.
+  \item FLARE's targets (SigLIP-2) encode general visual semantics, not action-predictable physics.
+  \item AC-UL's latents are \emph{trained} to contain only action-predictable geometry.
+  \item AC-UL jointly generates observations and actions; FLARE generates only actions with future features as auxiliary.
 \end{itemize}
 
 \subsection{Limitations}
 
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \textbf{Two-stage training:} Stage~1 requires training three diffusion models (encoder, prior, decoder) simultaneously, which is computationally expensive.
-  \item \textbf{Single-step dynamics:} The current formulation conditions on one-step transitions. Multi-step conditioning (e.g., $(\vz_{k-H:k}, \va_{k-H:k})$) may improve long-horizon prediction.
-  \item \textbf{Deterministic encoder:} Inherently stochastic environments (e.g., other agents) cannot be fully captured by a deterministic encoder, even with action conditioning.
-  \item \textbf{Action space assumption:} The method assumes access to low-dimensional action labels during Stage~1. Extension to action-free video (e.g., human demonstrations) requires additional work.
+  \item \textbf{Two-stage training:} Stage~1 requires training three models simultaneously.
+  \item \textbf{Deterministic encoder:} Inherently stochastic environments cannot be fully captured.
+  \item \textbf{Fixed encoder at Stage~2:} If Stage~1 training is suboptimal, Stage~2 inherits these limitations.
+  \item \textbf{Real-time inference:} The diffusion decoder adds latency for visualization; however, the action can be extracted without decoding.
 \end{itemize}
 
 %=====================================================================
@@ -831,43 +914,37 @@ FLARE adds future latent prediction as an auxiliary loss to a VLA, using frozen 
 %=====================================================================
 
 \textbf{World models for robotics.}
-World models learn environment dynamics for planning and policy learning. Early work used recurrent state-space models~\citep{ha2018world,hafner2019dream}. DreamerV3~\citep{hafner2023dreamerv3} uses categorical latent variables with symlog predictions. IRIS~\citep{micheli2023transformers} tokenizes observations with a discrete autoencoder and models dynamics with a GPT. TD-MPC2~\citep{hansen2024tdmpc2} learns latent dynamics without a decoder, relying on reward prediction and temporal difference learning.
+Early work used recurrent state-space models~\citep{ha2018world,hafner2019dream}. DreamerV3~\citep{hafner2023dreamerv3} uses categorical latents. IRIS~\citep{micheli2023transformers} tokenizes observations with a discrete autoencoder. TD-MPC2~\citep{hansen2024tdmpc2} learns latent dynamics without a decoder. DreamZero~\citep{dreamzero2025} introduced autoregressive joint video-action generation at scale.
 
 \textbf{Pretrained features for world models.}
-DINO-WM~\citep{zhou2024dinowm} demonstrates that frozen DINOv2 patch features provide an effective basis for world modeling, achieving strong planning performance without task-specific training. UniPi~\citep{du2024unipi} uses video diffusion models as world models. R3M~\citep{nair2022r3m} and VIP~\citep{ma2023vip} learn visual representations for robotics but do not explicitly model dynamics.
+DINO-WM~\citep{zhou2024dinowm} uses frozen DINOv2 patch features. R3M~\citep{nair2022r3m} and VIP~\citep{ma2023vip} learn visual representations for robotics. V-JEPA 2 uses self-supervised video features for zero-shot manipulation.
 
 \textbf{Latent representations for generation.}
-Latent Diffusion Models~\citep{rombach2022high} popularized learning autoencoders for diffusion. Unified Latents~\citep{heek2025ul} provides a principled framework for jointly training encoders and diffusion priors. Our work extends this framework to action-conditioned dynamics.
+Latent Diffusion Models~\citep{rombach2022high} learn autoencoders for diffusion. Unified Latents~\citep{heek2025ul} jointly trains encoders and diffusion priors. Our work extends UL to action-conditioned dynamics.
 
 \textbf{Vision-Language-Action models.}
-RT-2~\citep{brohan2023rt2} and OpenVLA~\citep{kim2024openvla} fine-tune vision-language models for action prediction. FLARE~\citep{nvidia2025flare} adds future latent alignment as an auxiliary objective. GR00T N1~\citep{nvidia2025groot} is a generalist robot policy. Our Stage~2 builds on this paradigm but uses physics-grounded latents instead of pretrained visual features.
+RT-2~\citep{brohan2023rt2}, OpenVLA~\citep{kim2024openvla}, and GR00T N1~\citep{nvidia2025groot} fine-tune VLMs for action prediction. FLARE~\citep{nvidia2025flare} adds future latent alignment. $\pi_0$~\citep{pi02024} uses flow matching for action generation. Our Stage~2 builds on this paradigm but uses physics-grounded latents.
 
-\textbf{Information bottleneck in representation learning.}
-The information bottleneck principle~\citep{tishby2000information} formalizes the trade-off between compression and prediction. VICReg~\citep{bardes2022vicreg} and related methods learn representations by balancing invariance and informativeness. AC-UL implements a specific instantiation: compress out everything \emph{unpredictable from actions}.
+\textbf{Joint video-action generation.}
+DreamZero~\citep{dreamzero2025} and UniSim~\citep{yang2024unisim} jointly generate video and actions. UWM~\citep{zhu2025uwm} couples video and action diffusion. Our work provides a principled latent space for such joint generation.
 
 %=====================================================================
 \section{Conclusion}
 \label{sec:conclusion}
 %=====================================================================
 
-We introduced Action-Conditioned Unified Latents (AC-UL), a framework for learning visual representations that are mathematically optimized to encode only the physical geometry that robot actions affect. By extending the Unified Latents variational objective with an action-conditioned dynamics prior, we create an information bottleneck that discards unpredictable visual content while retaining action-relevant structure.
+We introduced Action-Conditioned Unified Latents (AC-UL), a framework for learning visual representations optimized to encode only the physical geometry predictable from interaction history.
+By extending the Unified Latents variational objective with a history-conditioned joint dynamics prior that simultaneously predicts future observations and current actions, we create an information bottleneck that discards unpredictable visual content while retaining action-relevant structure.
 
-Our two-stage approach separates representation learning from policy learning: Stage~1 trains a physics-grounded encoder via the AC-UL objective, and Stage~2 trains an autoregressive transformer on the frozen latents for action prediction and planning. This separation allows the Stage~2 model to focus entirely on long-horizon reasoning and policy execution, rather than learning visual physics from scratch.
+Our formulation follows the autoregressive video-action generation paradigm of DreamZero but operates in a principled latent space rather than raw pixels.
+Stage~1 trains the physics-grounded encoder via the AC-UL objective, and Stage~2 trains an autoregressive diffusion transformer on frozen latents for joint video-action generation in closed loop.
 
-We believe AC-UL opens several promising directions: extending to multi-step dynamics conditioning, incorporating action-free video data for broader visual pretraining, and scaling to foundation-model-sized Stage~2 transformers that leverage the compact, physics-grounded vocabulary.
+We believe AC-UL opens promising directions: scaling Stage~2 to foundation-model sizes, incorporating action-free video for broader pretraining, and extending to multi-step chunk-wise generation for real-time control.
 
 %=====================================================================
-% References
-%=====================================================================
-
 \bibliographystyle{plainnat}
 
-\begin{thebibliography}{30}
-
-\bibitem[Bardes et~al.(2022)]{bardes2022vicreg}
-A.~Bardes, J.~Ponce, and Y.~LeCun.
-\newblock VICReg: Variance-invariance-covariance regularization for self-supervised learning.
-\newblock In \emph{ICLR}, 2022.
+\begin{thebibliography}{35}
 
 \bibitem[Brohan et~al.(2023)]{brohan2023rt2}
 A.~Brohan, N.~Brown, J.~Carbajal, et~al.
@@ -879,10 +956,10 @@ M.~Caron, H.~Touvron, I.~Misra, et~al.
 \newblock Emerging properties in self-supervised vision transformers.
 \newblock In \emph{ICCV}, 2021.
 
-\bibitem[Du et~al.(2024)]{du2024unipi}
-Y.~Du, M.~Yang, P.~Florence, et~al.
-\newblock Learning universal policies via text-guided video generation.
-\newblock In \emph{NeurIPS}, 2024.
+\bibitem[DreamZero Team(2025)]{dreamzero2025}
+DreamZero Team.
+\newblock DreamZero: Autoregressive video-action world models for zero-shot robot manipulation.
+\newblock \emph{arXiv preprint arXiv:2602.15922}, 2025.
 
 \bibitem[Ha and Schmidhuber(2018)]{ha2018world}
 D.~Ha and J.~Schmidhuber.
@@ -922,7 +999,7 @@ E.~Hoogeboom, J.~Heek, and T.~Salimans.
 \bibitem[James et~al.(2020)]{james2020rlbench}
 S.~James, Z.~Ma, D.~Rovick~Arrojo, and A.~J.~Davison.
 \newblock RLBench: The robot learning benchmark \& learning environment.
-\newblock \emph{IEEE Robotics and Automation Letters}, 2020.
+\newblock \emph{IEEE RA-L}, 2020.
 
 \bibitem[Khazatsky et~al.(2024)]{khazatsky2024droid}
 D.~Khazatsky, K.~Pertsch, S.~Nair, et~al.
@@ -957,7 +1034,7 @@ Y.~J.~Ma, S.~Sodhani, J.~Jayaraman, et~al.
 \bibitem[Mees et~al.(2022)]{mees2022calvin}
 O.~Mees, L.~Hermann, E.~Rosete-Beas, and W.~Burgard.
 \newblock CALVIN: A benchmark for language-conditioned policy learning for long-horizon robot manipulation tasks.
-\newblock \emph{IEEE Robotics and Automation Letters}, 2022.
+\newblock \emph{IEEE RA-L}, 2022.
 
 \bibitem[Micheli et~al.(2023)]{micheli2023transformers}
 V.~Micheli, E.~Alonso, and F.~Fleuret.
@@ -979,20 +1056,15 @@ NVIDIA et~al.
 \newblock GR00T N1: An open foundation model for generalist humanoid robots.
 \newblock \emph{arXiv preprint}, 2025.
 
-\bibitem[Open X-Embodiment(2023)]{oxe2023}
-Open X-Embodiment Collaboration.
-\newblock Open X-Embodiment: Robotic learning datasets and RT-X models.
-\newblock In \emph{ICRA}, 2023.
+\bibitem[Physical Intelligence(2024)]{pi02024}
+Physical Intelligence.
+\newblock $\pi_0$: A vision-language-action flow model for general robot control.
+\newblock \emph{arXiv preprint}, 2024.
 
 \bibitem[Rombach et~al.(2022)]{rombach2022high}
 R.~Rombach, A.~Blatt, D.~Lorenz, P.~Esser, and B.~Ommer.
 \newblock High-resolution image synthesis with latent diffusion models.
 \newblock In \emph{CVPR}, 2022.
-
-\bibitem[Tishby et~al.(2000)]{tishby2000information}
-N.~Tishby, F.~C.~Pereira, and W.~Bialek.
-\newblock The information bottleneck method.
-\newblock \emph{arXiv preprint physics/0004057}, 2000.
 
 \bibitem[Vahdat et~al.(2021)]{vahdat2021score}
 A.~Vahdat, K.~Kreis, and J.~Kautz.
@@ -1004,10 +1076,20 @@ H.~R.~Walke, K.~Black, A.~Lee, et~al.
 \newblock BridgeData V2: A dataset for robot learning at scale.
 \newblock In \emph{CoRL}, 2023.
 
+\bibitem[Yang et~al.(2024)]{yang2024unisim}
+M.~Yang, Y.~Du, D.~Hafner, et~al.
+\newblock Learning interactive real-world simulators.
+\newblock In \emph{ICLR}, 2024.
+
 \bibitem[Zhou et~al.(2024)]{zhou2024dinowm}
 G.~Zhou, M.~Liu, et~al.
 \newblock DINO-WM: World models on pre-trained visual features enable zero-shot planning.
 \newblock \emph{arXiv preprint arXiv:2411.04983}, 2024.
+
+\bibitem[Zhu et~al.(2025)]{zhu2025uwm}
+C.~Zhu, Y.~Yu, et~al.
+\newblock Unified World Models: Coupling video and action diffusion for pretraining on large robotic datasets.
+\newblock \emph{arXiv preprint arXiv:2504.02792}, 2025.
 
 \end{thebibliography}
 
@@ -1017,108 +1099,75 @@ G.~Zhou, M.~Liu, et~al.
 \label{app:derivations}
 %=====================================================================
 
-\subsection{Full Derivation of the AC-UL Prior Bound}
+\subsection{Full Derivation of the History-Conditioned Joint Prior Bound}
 \label{app:prior_derivation}
 
-We provide the complete derivation of the action-conditioned prior bound (\Cref{eq:ac_prior_loss}).
-
-\textbf{Step 1: ELBO for conditional generation.}
-We want to model $p_\theta(\vx_{k+1} | \vx_k, \va_k)$. Introducing a latent variable $\vz_{k+1,0}$:
+\textbf{Step 1: ELBO for joint conditional generation.}
+We model the joint distribution $p_\theta(\vo_{t+1}, \va_t \mid \mathcal{H}_t)$. Introducing a latent $\vz_{t+1,0}$:
 \begin{align}
-  -\log p_\theta(\vx_{k+1} | \vx_k, \va_k)
-  &= -\log \int p_\theta(\vx_{k+1} | \vz_{k+1,0})\, p_\theta(\vz_{k+1,0} | \vz_{k,\text{clean}}, \va_k)\, d\vz_{k+1,0} \\
-  &\leq -\E_{q(\vz_{k+1,0} | \vx_{k+1})}\!\left[\log p_\theta(\vx_{k+1} | \vz_{k+1,0})\right] + \KL\!\left[q(\vz_{k+1,0} | \vx_{k+1}) \,\|\, p_\theta(\vz_{k+1,0} | \vz_{k,\text{clean}}, \va_k)\right],
-  \label{eq:app_elbo}
+  -\log p_\theta(\vo_{t+1}, \va_t \mid \mathcal{H}_t)
+  &= -\log \int p_\theta(\vo_{t+1} \mid \vz_{t+1,0})\, p_\theta(\va_t \mid \vz_{t+1,0}, \mathcal{H}_t^z)\, p_\theta(\vz_{t+1,0} \mid \mathcal{H}_t^z)\, d\vz_{t+1,0} \\
+  &\leq -\E_{q(\vz_{t+1,0} | \vo_{t+1})}\!\left[\log p_\theta(\vo_{t+1} | \vz_{t+1,0}) + \log p_\theta(\va_t | \vz_{t+1,0}, \mathcal{H}_t^z)\right] \nonumber \\
+  &\quad + \KL\!\left[q(\vz_{t+1,0} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0} | \mathcal{H}_t^z)\right],
+  \label{eq:app_joint_elbo}
 \end{align}
-where $q(\vz_{k+1,0} | \vx_{k+1}) = \mathcal{N}(\alpha_z(0)\, E_\theta(\vx_{k+1}),\, \sigma_z^2(0)\, \bm{I})$ is the encoder distribution (deterministic encoding + fixed noise).
+where $q(\vz_{t+1,0} | \vo_{t+1}) = \mathcal{N}(\alpha_z(0)\, E_\theta(\vo_{t+1}),\, \sigma_z^2(0)\, \bm{I})$.
 
-\textbf{Step 2: Bounding the KL with diffusion.}
-The prior $p_\theta(\vz_{k+1,0} | \vz_{k,\text{clean}}, \va_k)$ is an action-conditioned diffusion model. We augment both $q$ and $p_\theta$ with the full diffusion path $\vz_{k+1,0:1}$:
+\textbf{Step 2: Bounding the latent KL with diffusion.}
+The prior $p_\theta(\vz_{t+1,0} | \mathcal{H}_t^z)$ is a history-conditioned diffusion model. Augmenting with the full path:
 \begin{align}
-  &\KL\!\left[q(\vz_{k+1,0} | \vx_{k+1}) \,\|\, p_\theta(\vz_{k+1,0} | \vz_{k,\text{clean}}, \va_k)\right] \nonumber \\
-  &\leq \KL\!\left[q(\vz_{k+1,0:1} | \vx_{k+1}) \,\|\, p_\theta(\vz_{k+1,0:1} | \vz_{k,\text{clean}}, \va_k)\right],
+  &\KL\!\left[q(\vz_{t+1,0} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0} | \mathcal{H}_t^z)\right] \nonumber \\
+  &\leq \KL\!\left[q(\vz_{t+1,0:1} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0:1} | \mathcal{H}_t^z)\right].
   \label{eq:app_chain}
 \end{align}
-since marginalizing over intermediate steps can only reduce the KL (data processing inequality).
 
 \textbf{Step 3: Decomposing the path KL.}
-Following \citet{kingma2021variational}, the path KL decomposes into a continuous sum of infinitesimal denoising steps:
+Following \citet{kingma2021variational}:
 \begin{align}
-  &\KL\!\left[q(\vz_{k+1,0:1} | \vx_{k+1}) \,\|\, p_\theta(\vz_{k+1,0:1} | \vz_{k,\text{clean}}, \va_k)\right] \nonumber \\
-  &= \int_0^1 \E_{q(\vz_{k+1,\tau} | \vx_{k+1})}\!\left[-\frac{d\lambda_z(\tau)}{d\tau}\, \frac{\exp\lambda_z(\tau)}{2}\, w(\lambda_z(\tau))\, \|\vz_{k+1,\text{clean}} - \hat{\vz}_\theta^{\text{dyn}}(\vz_{k+1,\tau}, \vz_{k,\text{clean}}, \va_k)\|^2\right] d\tau \nonumber \\
-  &\quad + \KL\!\left[q(\vz_{k+1,1} | \vx_{k+1}) \,\|\, \mathcal{N}(\bm{0}, \bm{I})\right].
+  &\KL\!\left[q(\vz_{t+1,0:1} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0:1} | \mathcal{H}_t^z)\right] \nonumber \\
+  &= \int_0^1 \E_{q(\vz_{t+1,\tau} | \vo_{t+1})}\!\left[-\frac{d\lambda_z(\tau)}{d\tau}\, \frac{\exp\lambda_z(\tau)}{2}\, \|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta^{\text{dyn}}(\vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2\right] d\tau \nonumber \\
+  &\quad + \KL\!\left[q(\vz_{t+1,1} | \vo_{t+1}) \,\|\, \mathcal{N}(\bm{0}, \bm{I})\right].
   \label{eq:app_decompose}
 \end{align}
 
-The key insight is that the forward process $q(\vz_{k+1,\tau} | \vx_{k+1})$ is fixed (same as standard diffusion), but the reverse model $\hat{\vz}_\theta^{\text{dyn}}$ now conditions on $(\vz_{k,\text{clean}}, \va_k)$. This changes the \emph{model's prediction target} without changing the mathematical structure of the bound.
+The conditioning on $\mathcal{H}_t^z$ is the key difference from standard UL: the prior uses the full interaction history, which includes both past observation latents and past actions, to predict the future.
 
-\textbf{Step 4: Monte Carlo estimation.}
-In practice, the integral is estimated by sampling $\tau \sim \mathcal{U}(0,1)$:
+\textbf{Step 4: Action likelihood term.}
+The action prediction component uses a Gaussian likelihood:
 \begin{align}
-  \loss_z(\theta) &= \E_{\tau \sim \mathcal{U}(0,1)}\!\left[-\frac{d\lambda_z(\tau)}{d\tau}\, \frac{\exp\lambda_z(\tau)}{2}\, \|\vz_{k+1,\text{clean}} - \hat{\vz}_\theta^{\text{dyn}}(\vz_{k+1,\tau}, \vz_{k,\text{clean}}, \va_k)\|^2\right] \nonumber \\
-  &\quad + \KL\!\left[q(\vz_{k+1,1} | \vx_{k+1}) \,\|\, \mathcal{N}(\bm{0}, \bm{I})\right].
-  \label{eq:app_mc}
+  -\log p_\theta(\va_t | \vz_{t+1,0}, \mathcal{H}_t^z) &\propto \|\va_t - \hat{\va}_\theta(\vz_{t+1,0}, \mathcal{H}_t^z)\|^2.
+  \label{eq:app_action}
 \end{align}
 
-\textbf{Step 5: Terminal KL.}
-For the terminal KL, with $\lambda_z(1) \to -\infty$:
+In practice, since $\vz_{t+1,0} \approx \vz_{t+1,\text{clean}}$ (the noise at $\tau=0$ is small), we share the action prediction with the dynamics prior model evaluated at arbitrary $\tau$, which provides a training signal at all noise levels.
+
+\textbf{Step 5: Combining all terms.}
+The complete bound is:
 \begin{align}
-  q(\vz_{k+1,1} | \vx_{k+1}) &= \mathcal{N}(\alpha_z(1)\, \vz_{k+1,\text{clean}},\, \sigma_z^2(1)\, \bm{I}) \approx \mathcal{N}(\bm{0}, \bm{I}), \\
-  \KL\!\left[q(\vz_{k+1,1} | \vx_{k+1}) \,\|\, \mathcal{N}(\bm{0}, \bm{I})\right] &= \frac{1}{2}\left[\alpha_z^2(1)\, \|\vz_{k+1,\text{clean}}\|^2 + d\,(\sigma_z^2(1) - 1 - \log \sigma_z^2(1))\right] \approx 0.
-  \label{eq:app_terminal}
+  -\log p_\theta(\vo_{t+1}, \va_t | \mathcal{H}_t) &\leq \underbrace{\loss_z^{\text{latent}}(\theta)}_{\text{latent KL bound}} + \gamma \cdot \underbrace{\loss_a(\theta)}_{\text{action MSE}} + c_{\text{lf}} \cdot \underbrace{\loss_x(\theta)}_{\text{decoder bound}}.
+  \label{eq:app_total}
 \end{align}
-
-\subsection{Full Derivation of the Decoder Bound}
-\label{app:decoder_derivation}
-
-The decoder bound follows standard diffusion ELBO theory applied to the conditional distribution $p_\theta(\vx_{k+1} | \vz_{k+1,0})$.
-
-\textbf{Step 1.}
-The forward process in image space is:
-\begin{equation}
-  q(\vx_{k+1,\tau} | \vx_{k+1}) = \mathcal{N}(\alpha_x(\tau)\, \vx_{k+1},\, \sigma_x^2(\tau)\, \bm{I}).
-\end{equation}
-
-\textbf{Step 2.}
-The decoder models $p_\theta(\vx_{k+1,0:1} | \vz_{k+1,0})$ as a reverse diffusion process conditioned on $\vz_{k+1,0}$:
-\begin{align}
-  -\log p_\theta(\vx_{k+1} | \vz_{k+1,0})
-  &\leq \KL\!\left[q(\vx_{k+1,0:1} | \vx_{k+1}) \,\|\, p_\theta(\vx_{k+1,0:1} | \vz_{k+1,0})\right] \\
-  &= \E_{\tau}\!\left[\frac{d\lambda_x(\tau)}{d\tau}\, \frac{\exp\lambda_x(\tau)}{2}\, w_x(\lambda_x(\tau))\, \|\vx_{k+1} - \hat{\vx}(\vx_{k+1,\tau}, \vz_{k+1,0}, \theta)\|^2\right].
-  \label{eq:app_decoder}
-\end{align}
-
-Note the sign change: $d\lambda_x/d\tau > 0$ when $\lambda_x$ increases with $\tau$ (going from noisy to clean). In UL's convention, $\tau = 0$ corresponds to clean data and $\tau = 1$ to noise, so $d\lambda_x/d\tau < 0$ and we need the absolute value, resulting in the positive loss.
-
-\textbf{Step 3: Re-weighting.}
-Unlike the prior, the decoder uses a re-weighted ELBO:
-\begin{equation}
-  w_x(\lambda_x(\tau)) = c_{\text{lf}} \cdot \sigmoid(\lambda_x(\tau) - b).
-\end{equation}
-This discounts high-frequency details ($\lambda_x \ll 0$, high noise) and emphasizes structure ($\lambda_x \gg 0$, low noise). The loss factor $c_{\text{lf}}$ scales the entire decoder loss relative to the prior.
 
 \subsection{Information-Theoretic Analysis}
 \label{app:info_theory}
 
 \textbf{Claim.}
-The AC-UL prior loss upper-bounds the conditional mutual information $I(\vz_{k+1,\text{clean}}; \vx_{k+1} \mid \vz_{k,\text{clean}}, \va_k)$.
+The AC-UL prior loss upper-bounds $I(\vz_{t+1,\text{clean}}; \vo_{t+1} \mid \mathcal{H}_t^z)$.
 
-\textbf{Proof sketch.}
-The KL term in the ELBO can be written as:
+\textbf{Proof.}
+The KL in the ELBO satisfies:
 \begin{align}
-  &\KL\!\left[q(\vz_{k+1,0} | \vx_{k+1}) \,\|\, p_\theta(\vz_{k+1,0} | \vz_{k,\text{clean}}, \va_k)\right] \nonumber \\
-  &= \E_{q(\vx_{k+1})}\!\left[\KL\!\left[q(\vz_{k+1,0} | \vx_{k+1}) \,\|\, p_\theta(\vz_{k+1,0} | \vz_{k,\text{clean}}, \va_k)\right]\right] \\
-  &\geq I(\vz_{k+1,0}; \vx_{k+1} \mid \vz_{k,\text{clean}}, \va_k) + \E_{q(\vx_{k+1})}\!\left[\KL\!\left[q(\vz_{k+1,0}) \,\|\, p_\theta(\vz_{k+1,0} | \vz_{k,\text{clean}}, \va_k)\right]\right].
+  \E_{p(\mathcal{H}_t)}\!\left[\KL\!\left[q(\vz_{t+1,0} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0} | \mathcal{H}_t^z)\right]\right]
+  &\geq I(\vz_{t+1,0}; \vo_{t+1} | \mathcal{H}_t^z).
 \end{align}
+When the prior is optimal ($p_\theta = p^*$), equality holds. Since $\loss_z^{\text{latent}}$ upper-bounds the KL, we have $\loss_z^{\text{latent}} \geq I(\vz_{t+1,\text{clean}}; \vo_{t+1} | \mathcal{H}_t^z)$.
 
-When the prior is optimal (matches the true conditional), the second term vanishes, and the KL exactly equals the conditional mutual information. In practice, the prior is imperfect, so the KL is an upper bound.
-
-Since the AC-UL loss further upper-bounds this KL via the diffusion decomposition, we have:
+\textbf{Role of joint action prediction.}
+The action loss provides an additional constraint. At optimality:
 \begin{equation}
-  \loss_z(\theta) \geq I(\vz_{k+1,\text{clean}}; \vx_{k+1} \mid \vz_{k,\text{clean}}, \va_k).
+  I(\va_t; \vz_{t+1,\text{clean}} | \mathcal{H}_t^z) \geq I(\va_t; \vo_{t+1} | \mathcal{H}_t^z) - I(\va_t; \vo_{t+1} | \vz_{t+1,\text{clean}}, \mathcal{H}_t^z).
 \end{equation}
-
-Minimizing $\loss_z$ therefore minimizes the information in $\vz_{k+1,\text{clean}}$ that is unpredictable from $(\vz_{k,\text{clean}}, \va_k)$, which is exactly the action-irrelevant content.
+The action loss pushes $\vz_{t+1,\text{clean}}$ to be a \emph{sufficient statistic} for the action given the history, meaning $I(\va_t; \vo_{t+1} | \vz_{t+1,\text{clean}}, \mathcal{H}_t^z) \to 0$. This ensures the latent captures the full causal effect of the action.
 
 %=====================================================================
 \section{Implementation Details}
@@ -1130,7 +1179,7 @@ Minimizing $\loss_z$ therefore minimizes the information in $\vz_{k+1,\text{clea
 \begin{table}[h]
 \centering
 \caption{Stage 1 hyperparameters.}
-\label{tab:app_stage1_hparams}
+\label{tab:app_stage1}
 \begin{tabular}{ll}
 \toprule
 \textbf{Hyperparameter} & \textbf{Value} \\
@@ -1139,11 +1188,13 @@ Image resolution & $224 \times 224$ \\
 Latent spatial size & $14 \times 14$ \\
 Latent channels & 32 \\
 Encoder architecture & ResNet $[128, 256, 512, 512]$ \\
-Prior architecture & ViT-B (12 blocks, 768 dim) \\
+Prior architecture & Causal ViT-B (12 blocks, 768 dim) \\
 Decoder architecture & UViT $[128, 256, 512]$ + 8-block transformer \\
+History length $H$ & 4 \\
 $\lambda_z(0)$ (min noise log-SNR) & 5 \\
 Decoder sigmoid bias $b$ & 3.0 \\
 Loss factor $c_{\text{lf}}$ & 1.5 \\
+Action loss weight $\gamma$ & 1.0 \\
 Optimizer & AdamW ($\beta_1 = 0.9$, $\beta_2 = 0.999$) \\
 Learning rate & $1 \times 10^{-4}$ \\
 LR schedule & Cosine with 5K warmup \\
@@ -1162,7 +1213,7 @@ Dropout & 0.1 (prior and decoder) \\
 \begin{table}[h]
 \centering
 \caption{Stage 2 hyperparameters.}
-\label{tab:app_stage2_hparams}
+\label{tab:app_stage2}
 \begin{tabular}{ll}
 \toprule
 \textbf{Hyperparameter} & \textbf{Value} \\
@@ -1170,10 +1221,11 @@ Dropout & 0.1 (prior and decoder) \\
 Transformer layers & 12 \\
 Hidden dimension & 768 \\
 Attention heads & 12 \\
-History length $H$ & 3 \\
-World model weight $\beta$ & 0.5 \\
+Chunk size $K$ & 2 latent frames \\
+Context length & 8 latent frames \\
 Text encoder & CLIP ViT-B/32 (frozen) \\
-Action prediction & Flow matching, $K = 4$ steps \\
+Training objective & Flow matching \\
+Denoising steps (inference) & 4 \\
 Optimizer & AdamW ($\beta_1 = 0.9$, $\beta_2 = 0.95$) \\
 Learning rate & $3 \times 10^{-4}$ \\
 LR schedule & Cosine with 2K warmup \\
@@ -1188,19 +1240,16 @@ Gradient clipping & 1.0 \\
 
 \begin{table}[h]
 \centering
-\caption{CEM planning hyperparameters.}
-\label{tab:app_planning_hparams}
+\caption{Planning hyperparameters.}
+\label{tab:app_planning}
 \begin{tabular}{ll}
 \toprule
 \textbf{Hyperparameter} & \textbf{Value} \\
 \midrule
-Population size $N$ & 512 \\
-Elite fraction $K$ & 64 \\
-CEM iterations & 5 \\
-Planning horizon $P$ & 10 \\
-Receding horizon (execute) & 3 \\
-Action noise std (initial) & 0.3 \\
-Action clipping & $[-1, 1]$ \\
+Best-of-$N$ samples & 256 \\
+Planning horizon $P$ & 10 steps \\
+Receding horizon (execute) & $K$ = 2 steps \\
+Action smoothing & Savitzky-Golay filter \\
 \bottomrule
 \end{tabular}
 \end{table}
