@@ -1,0 +1,194 @@
+\documentclass{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{bm}
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+\usepackage{amsthm}
+
+\newcommand{\vo}{\bm{o}}
+\newcommand{\vz}{\bm{z}}
+\newcommand{\va}{\bm{a}}
+\newcommand{\loss}{\mathcal{L}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\KL}{\mathrm{KL}}
+\DeclareMathOperator{\sigmoid}{sigmoid}
+
+\title{Explanation: Unpredictable vs.\ Predictable Information\\and Why the Prior Loss Upper-Bounds It}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{What is Mutual Information?}
+
+Mutual information $I(X; Y)$ measures how much knowing $Y$ reduces your uncertainty about $X$ (and vice versa). Formally:
+\begin{equation}
+  I(X; Y) = H(X) - H(X \mid Y),
+\end{equation}
+where $H(X)$ is the entropy (uncertainty) of $X$, and $H(X \mid Y)$ is the remaining uncertainty about $X$ after observing $Y$.
+
+\textbf{Key intuition:} If $I(X; Y)$ is large, then $X$ and $Y$ share a lot of information---knowing one tells you a lot about the other. If $I(X; Y) = 0$, they are independent.
+
+\textbf{Conditional mutual information} $I(X; Y \mid Z)$ measures the shared information between $X$ and $Y$ \emph{that is not already explained by $Z$}:
+\begin{equation}
+  I(X; Y \mid Z) = H(X \mid Z) - H(X \mid Y, Z).
+\end{equation}
+
+\section{The Information Decomposition: What is ``Predictable'' and ``Unpredictable''?}
+
+Let us write out what the encoder's latent $\vz_{t+1,\text{clean}} = E_\theta(\vo_{t+1})$ knows about the future observation $\vo_{t+1}$.
+
+The total information the latent carries about $\vo_{t+1}$ is:
+\begin{equation}
+  I(\vz_{t+1,\text{clean}};\, \vo_{t+1}).
+\end{equation}
+
+Now consider the history $\mathcal{H}_t^z = (\vz_{t-H+1:t,\text{clean}},\, \va_{t-H:t-1})$. By the chain rule of mutual information:
+\begin{equation}
+  \boxed{I(\vz_{t+1};\, \vo_{t+1}) = \underbrace{I(\vz_{t+1};\, \mathcal{H}_t^z)}_{\text{(A) predictable}} + \underbrace{I(\vz_{t+1};\, \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{(B) unpredictable}}}
+  \label{eq:decomp}
+\end{equation}
+(We drop the ``clean'' subscript for brevity.)
+
+\subsection{Term (A): Predictable Information --- $I(\vz_{t+1};\, \mathcal{H}_t^z)$}
+
+This is the information in the future latent $\vz_{t+1}$ that is \textbf{shared with the history}.
+
+\textbf{Concrete example.} Suppose the history shows:
+\begin{itemize}[leftmargin=*]
+  \item The gripper is at position $(0.3, 0.5, 0.1)$ in the last frame $\vz_t$.
+  \item The last action $\va_{t-1}$ commanded a 5cm rightward motion.
+\end{itemize}
+Then the fact that ``the gripper is now at $(0.35, 0.5, 0.1)$'' in $\vz_{t+1}$ is \textbf{predictable from the history}. If the encoder encodes this gripper position, it does not add any information \emph{beyond} what the history already implies. This is term (A).
+
+\textbf{Why it is ``free'':} A perfect dynamics prior, given the history, could predict this part of $\vz_{t+1}$ with zero error. The prior loss does not penalize this information because the prior can match it.
+
+\subsection{Term (B): Unpredictable Information --- $I(\vz_{t+1};\, \vo_{t+1} \mid \mathcal{H}_t^z)$}
+
+This is the information in $\vz_{t+1}$ about $\vo_{t+1}$ that \textbf{cannot be explained by the history}.
+
+\textbf{Concrete example.} Suppose in the next frame $\vo_{t+1}$:
+\begin{itemize}[leftmargin=*]
+  \item A shadow shifts due to a cloud passing outside the window.
+  \item Camera sensor noise creates a slightly different texture on the table.
+  \item A person walks through the background.
+\end{itemize}
+None of these changes can be predicted from the robot's past observations and actions. If the encoder encodes these details into $\vz_{t+1,\text{clean}}$, that information is \emph{new}---it was not in $\mathcal{H}_t^z$. This is term (B).
+
+\textbf{Why it is ``penalized'':} The prior, no matter how powerful, cannot predict this from the history. So the prior's prediction $\hat{\vz}_{t+1}$ will differ from $\vz_{t+1,\text{clean}}$ on exactly these components, creating a nonzero MSE.
+
+
+\section{Why the Prior Loss Upper-Bounds the Unpredictable Information}
+
+This is the key mathematical claim. We want to show:
+\begin{equation}
+  \loss_z^{\text{latent}} \geq I(\vz_{t+1,\text{clean}};\, \vo_{t+1} \mid \mathcal{H}_t^z).
+\end{equation}
+
+\subsection{Step 1: The KL divergence is always $\geq$ the mutual information}
+
+This is a standard result. For any two distributions $q(\vz \mid \vo)$ (encoder) and $p_\theta(\vz \mid \mathcal{H})$ (prior):
+\begin{align}
+  &\E_{p(\vo, \mathcal{H})}\Big[\KL\!\big[q(\vz \mid \vo) \;\|\; p_\theta(\vz \mid \mathcal{H})\big]\Big] \nonumber \\
+  &= \E_{p(\vo, \mathcal{H})}\Big[\E_{q(\vz|\vo)}\Big[\log \frac{q(\vz \mid \vo)}{p_\theta(\vz \mid \mathcal{H})}\Big]\Big].
+  \label{eq:kl_expand}
+\end{align}
+
+We can split the log ratio:
+\begin{align}
+  \log \frac{q(\vz \mid \vo)}{p_\theta(\vz \mid \mathcal{H})}
+  &= \log \frac{q(\vz \mid \vo)}{q(\vz \mid \mathcal{H})} + \log \frac{q(\vz \mid \mathcal{H})}{p_\theta(\vz \mid \mathcal{H})}.
+  \label{eq:split}
+\end{align}
+
+Taking expectations:
+\begin{align}
+  \E\Big[\KL\!\big[q(\vz \mid \vo) \;\|\; p_\theta(\vz \mid \mathcal{H})\big]\Big]
+  &= \underbrace{\E\Big[\KL\!\big[q(\vz \mid \vo) \;\|\; q(\vz \mid \mathcal{H})\big]\Big]}_{= I(\vz;\, \vo \mid \mathcal{H})}
+  + \underbrace{\E\Big[\KL\!\big[q(\vz \mid \mathcal{H}) \;\|\; p_\theta(\vz \mid \mathcal{H})\big]\Big]}_{\geq 0}.
+  \label{eq:decompose_kl}
+\end{align}
+
+The first term is exactly the conditional mutual information $I(\vz_{t+1};\, \vo_{t+1} \mid \mathcal{H}_t^z)$.
+
+The second term is the KL between the \emph{true} conditional marginal $q(\vz \mid \mathcal{H})$ and the \emph{learned} prior $p_\theta(\vz \mid \mathcal{H})$. Since KL is always $\geq 0$:
+\begin{equation}
+  \boxed{\E\Big[\KL\!\big[q(\vz \mid \vo) \;\|\; p_\theta(\vz \mid \mathcal{H})\big]\Big] \geq I(\vz;\, \vo \mid \mathcal{H}).}
+  \label{eq:kl_geq_mi}
+\end{equation}
+
+\textbf{Intuition:} The KL measures how badly the prior $p_\theta$ predicts the encoder's output. This is at least as large as the ``intrinsic unpredictability'' (the mutual information), plus any ``modeling error'' from the prior not being perfect.
+
+\textbf{When does equality hold?} When $p_\theta(\vz \mid \mathcal{H}) = q(\vz \mid \mathcal{H})$, i.e., the prior perfectly matches the true conditional distribution of latents given history. In that case, the KL exactly equals the mutual information.
+
+\subsection{Step 2: The diffusion loss upper-bounds the KL}
+
+Now we need to connect the KL to the actual loss we compute. The prior is a diffusion model, and we showed in the paper that:
+\begin{equation}
+  \KL\!\big[q(\vz_{t+1,0} \mid \vo_{t+1}) \;\|\; p_\theta(\vz_{t+1,0} \mid \mathcal{H}_t^z)\big]
+  \leq \loss_z^{\text{latent}}(\theta),
+  \label{eq:diff_bound}
+\end{equation}
+where
+\begin{equation}
+  \loss_z^{\text{latent}} = \E_{\tau}\!\left[-\frac{d\lambda_z(\tau)}{d\tau}\,\frac{\exp\lambda_z(\tau)}{2}\,\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta(\vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2\right] + \KL[q(\vz_{t+1,1}|\vo_{t+1}) \| \mathcal{N}(\bm{0},\bm{I})].
+\end{equation}
+
+This bound comes from augmenting the distributions with the full diffusion path $\vz_{t+1,0:1}$ and using the data processing inequality:
+\begin{align}
+  \KL\!\big[q(\vz_0 \mid \vo) \;\|\; p_\theta(\vz_0 \mid \mathcal{H})\big]
+  &\leq \KL\!\big[q(\vz_{0:1} \mid \vo) \;\|\; p_\theta(\vz_{0:1} \mid \mathcal{H})\big].
+\end{align}
+The right-hand side decomposes into the sum of infinitesimal denoising step KLs, which reduces to the weighted MSE integral.
+
+\subsection{Step 3: Chaining the two bounds}
+
+Combining Steps 1 and 2:
+\begin{equation}
+  \boxed{\loss_z^{\text{latent}}(\theta) \geq \KL\!\big[q(\vz_0 \mid \vo) \;\|\; p_\theta(\vz_0 \mid \mathcal{H})\big] \geq I(\vz_{t+1};\, \vo_{t+1} \mid \mathcal{H}_t^z).}
+  \label{eq:chain}
+\end{equation}
+
+So the loss we actually compute (weighted MSE between true and predicted latents) is an upper bound on the ``unpredictable information'' in the latent.
+
+\section{What This Means for Training}
+
+When we minimize $\loss_z^{\text{latent}}$ w.r.t.\ the \textbf{encoder} parameters (remember, the encoder is trained jointly!):
+\begin{itemize}[leftmargin=*]
+  \item We are minimizing an upper bound on $I(\vz_{t+1};\, \vo_{t+1} \mid \mathcal{H}_t^z)$.
+  \item This pushes the encoder to \emph{reduce the unpredictable information} in the latent.
+  \item The encoder achieves this by not encoding things that the history cannot explain (shadows, noise, background changes).
+\end{itemize}
+
+When we minimize $\loss_z^{\text{latent}}$ w.r.t.\ the \textbf{prior} parameters:
+\begin{itemize}[leftmargin=*]
+  \item We are tightening the bound (making the second KL in Eq.~\ref{eq:decompose_kl} smaller).
+  \item The prior gets better at predicting the latent from history.
+  \item But this does not change the ``intrinsic unpredictability'' $I(\vz; \vo \mid \mathcal{H})$---it only reduces the modeling gap.
+\end{itemize}
+
+\section{Concrete Numerical Intuition}
+
+Suppose at some point during training, the latent $\vz_{t+1,\text{clean}}$ encodes 100 bits of information about $\vo_{t+1}$:
+\begin{itemize}[leftmargin=*]
+  \item 70 bits are about gripper/object geometry (predictable from history).
+  \item 30 bits are about background texture and lighting (unpredictable).
+\end{itemize}
+
+The prior can predict the 70 predictable bits well (low MSE on those components). But it cannot predict the 30 unpredictable bits (high MSE on those components).
+
+The loss $\loss_z^{\text{latent}} \geq 30$ bits. Since the encoder is being optimized to reduce this loss, it has two options:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Stop encoding the 30 unpredictable bits} $\to$ loss drops to $\approx 0$ (plus modeling error).
+  \item \textbf{Keep encoding them and hope the prior learns to predict them} $\to$ impossible, because they are genuinely random (not a function of the history).
+\end{enumerate}
+
+The encoder takes option 1. After training, the latent contains $\approx 70$ bits of action-relevant geometry.
+
+Meanwhile, the decoder loss $\loss_x$ pushes back: discarding those 30 bits makes reconstruction worse. The loss factor $c_{\text{lf}}$ controls the trade-off. With $c_{\text{lf}} = 1.5$, the decoder gets 1.5$\times$ weight, so the encoder keeps \emph{slightly more} information than the strict minimum---but only information that is at least partially predictable, not pure noise.
+
+\end{document}
