@@ -11,6 +11,7 @@
 \newcommand{\vo}{\bm{o}}
 \newcommand{\vz}{\bm{z}}
 \newcommand{\va}{\bm{a}}
+\newcommand{\vb}{\bm{b}}
 \newcommand{\loss}{\mathcal{L}}
 \newcommand{\E}{\mathbb{E}}
 \newcommand{\KL}{\mathrm{KL}}
@@ -40,18 +41,18 @@ where $H(X)$ is the entropy (uncertainty) of $X$, and $H(X \mid Y)$ is the remai
 
 \section{The Information Decomposition: What is ``Predictable'' and ``Unpredictable''?}
 
-Let us write out what the encoder's latent $\vz_{t+1,\text{clean}} = E_\theta(\vo_{t+1})$ knows about the future observation $\vo_{t+1}$.
+Let us write out what the observation encoder's latent $\vz_{t+1,\text{clean}} = E_\theta(\vo_{t+1})$ knows about the future observation $\vo_{t+1}$.
 
 The total information the latent carries about $\vo_{t+1}$ is:
 \begin{equation}
   I(\vz_{t+1,\text{clean}};\, \vo_{t+1}).
 \end{equation}
 
-Now consider the history $\mathcal{H}_t^z = (\bm{l},\, \vz_{t-H+1:t,\text{clean}},\, \va_{t-H:t-1})$, which includes:
+Now consider the latent history $\mathcal{H}_t^z = (\bm{l},\, \vz_{t-H+1:t,\text{clean}},\, \vb_{t-H:t-1})$, which includes:
 \begin{itemize}[leftmargin=*]
   \item $\bm{l}$: the language instruction (e.g., ``pick up the red block''),
   \item $\vz_{t-H+1:t,\text{clean}}$: past observation latents,
-  \item $\va_{t-H:t-1}$: past actions.
+  \item $\vb_{t-H:t-1}$: past action latents (encoded via $\vb_k = A_\theta(\va_k)$).
 \end{itemize}
 
 By the chain rule of mutual information:
@@ -63,21 +64,21 @@ By the chain rule of mutual information:
 
 \subsection{Term (A): Predictable Information --- $I(\vz_{t+1};\, \mathcal{H}_t^z)$}
 
-This is the information in the future latent $\vz_{t+1}$ that is \textbf{shared with the history and language instruction}.
+This is the information in the future observation latent $\vz_{t+1}$ that is \textbf{shared with the latent history and language instruction}.
 
 \textbf{Concrete example.} Suppose:
 \begin{itemize}[leftmargin=*]
   \item The language instruction says ``pick up the red block.''
   \item The history shows the gripper approaching the red block over the last few frames.
-  \item The last action $\va_{t-1}$ moved the gripper downward toward the block.
+  \item The last action latent $\vb_{t-1}$ encodes a downward gripper movement toward the block.
 \end{itemize}
-Then the fact that ``the gripper is now in contact with the red block'' in $\vz_{t+1}$ is \textbf{predictable from the history and language goal}. A good dynamics model, knowing the task goal and the approach trajectory, could predict this. This is term (A).
+Then the fact that ``the gripper is now in contact with the red block'' in $\vz_{t+1}$ is \textbf{predictable from the latent history and language goal}. A good dynamics model, knowing the task goal and the approach trajectory, could predict this. This is term (A).
 
-\textbf{Why it is ``free'':} A perfect dynamics prior, given the history and language, could predict this part of $\vz_{t+1}$ with zero error. The prior loss does not penalize this information because the prior can match it.
+\textbf{Why it is ``free'':} A perfect dynamics prior, given the latent history and language, could predict this part of $\vz_{t+1}$ with zero error. The prior loss does not penalize this information because the prior can match it.
 
 \subsection{Term (B): Unpredictable Information --- $I(\vz_{t+1};\, \vo_{t+1} \mid \mathcal{H}_t^z)$}
 
-This is the information in $\vz_{t+1}$ about $\vo_{t+1}$ that \textbf{cannot be explained by the history or language}.
+This is the information in $\vz_{t+1}$ about $\vo_{t+1}$ that \textbf{cannot be explained by the latent history or language}.
 
 \textbf{Concrete example.} Suppose in the next frame $\vo_{t+1}$:
 \begin{itemize}[leftmargin=*]
@@ -85,9 +86,9 @@ This is the information in $\vz_{t+1}$ about $\vo_{t+1}$ that \textbf{cannot be 
   \item Camera sensor noise creates a slightly different texture on the table.
   \item A person walks through the background.
 \end{itemize}
-None of these changes can be predicted from the robot's past observations, actions, or the language instruction ``pick up the red block.'' If the encoder encodes these details into $\vz_{t+1,\text{clean}}$, that information is \emph{new}---it was not in $\mathcal{H}_t^z$. This is term (B).
+None of these changes can be predicted from the robot's past observation latents, past action latents, or the language instruction ``pick up the red block.'' If the encoder encodes these details into $\vz_{t+1,\text{clean}}$, that information is \emph{new}---it was not in $\mathcal{H}_t^z$. This is term (B).
 
-\textbf{Why it is ``penalized'':} The prior, no matter how powerful, cannot predict this from the history and language. So the prior's prediction $\hat{\vz}_{t+1}$ will differ from $\vz_{t+1,\text{clean}}$ on exactly these components, creating a nonzero MSE.
+\textbf{Why it is ``penalized'':} The prior, no matter how powerful, cannot denoise this from the latent history and language. So the prior's denoised output $\hat{\vz}_{t+1}$ will differ from $\vz_{t+1,\text{clean}}$ on exactly these components, creating a nonzero MSE.
 
 
 \section{Why the Prior Loss Upper-Bounds the Unpredictable Information}
@@ -99,7 +100,7 @@ This is the key mathematical claim. We want to show:
 
 \subsection{Step 1: The KL divergence is always $\geq$ the mutual information}
 
-This is a standard result. For any two distributions $q(\vz \mid \vo)$ (encoder) and $p_\theta(\vz \mid \mathcal{H})$ (prior, conditioned on history + language):
+This is a standard result. For any two distributions $q(\vz \mid \vo)$ (encoder) and $p_\theta(\vz \mid \mathcal{H})$ (prior, conditioned on latent history + language):
 \begin{align}
   &\E_{p(\vo, \mathcal{H})}\Big[\KL\!\big[q(\vz \mid \vo) \;\|\; p_\theta(\vz \mid \mathcal{H})\big]\Big] \nonumber \\
   &= \E_{p(\vo, \mathcal{H})}\Big[\E_{q(\vz|\vo)}\Big[\log \frac{q(\vz \mid \vo)}{p_\theta(\vz \mid \mathcal{H})}\Big]\Big].
@@ -129,9 +130,9 @@ The second term is the KL between the \emph{true} conditional marginal $q(\vz \m
   \label{eq:kl_geq_mi}
 \end{equation}
 
-\textbf{Intuition:} The KL measures how badly the prior $p_\theta$ predicts the encoder's output. This is at least as large as the ``intrinsic unpredictability'' (the conditional mutual information), plus any ``modeling error'' from the prior not being perfect.
+\textbf{Intuition:} The KL measures how badly the prior $p_\theta$ denoises the encoder's output. This is at least as large as the ``intrinsic unpredictability'' (the conditional mutual information), plus any ``modeling error'' from the prior not being perfect.
 
-\textbf{When does equality hold?} When $p_\theta(\vz \mid \mathcal{H}) = q(\vz \mid \mathcal{H})$, i.e., the prior perfectly matches the true conditional distribution of latents given history and language. In that case, the KL exactly equals the mutual information.
+\textbf{When does equality hold?} When $p_\theta(\vz \mid \mathcal{H}) = q(\vz \mid \mathcal{H})$, i.e., the prior perfectly matches the true conditional distribution of latents given latent history and language. In that case, the KL exactly equals the mutual information.
 
 \subsection{Step 2: The diffusion loss upper-bounds the KL}
 
@@ -143,8 +144,10 @@ Now we need to connect the KL to the actual loss we compute. The prior is a diff
 \end{equation}
 where
 \begin{equation}
-  \loss_z^{\text{latent}} = \E_{\tau}\!\left[-\frac{d\lambda_z(\tau)}{d\tau}\,\frac{\exp\lambda_z(\tau)}{2}\,\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta(\vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2\right] + \KL[q(\vz_{t+1,1}|\vo_{t+1}) \| \mathcal{N}(\bm{0},\bm{I})].
+  \loss_z^{\text{latent}} = \E_{\tau}\!\left[-\frac{d\lambda_z(\tau)}{d\tau}\,\frac{\exp\lambda_z(\tau)}{2}\,\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta(\vb_{t,\tau}, \vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2\right] + \KL[q(\vz_{t+1,1}|\vo_{t+1}) \| \mathcal{N}(\bm{0},\bm{I})].
 \end{equation}
+
+Note that the prior takes as input both the noised observation latent $\vz_{t+1,\tau}$ and the noised action latent $\vb_{t,\tau}$, and jointly denoises them.
 
 This bound comes from augmenting the distributions with the full diffusion path $\vz_{t+1,0:1}$ and using the data processing inequality:
 \begin{align}
@@ -161,61 +164,71 @@ Combining Steps 1 and 2:
   \label{eq:chain}
 \end{equation}
 
-So the loss we actually compute (weighted MSE between true and predicted latents) is an upper bound on the ``unpredictable information'' in the latent.
+So the loss we actually compute (weighted MSE between true and denoised latents) is an upper bound on the ``unpredictable information'' in the latent.
 
 \section{What This Means for Training}
 
-When we minimize $\loss_z^{\text{latent}}$ w.r.t.\ the \textbf{encoder} parameters (remember, the encoder is trained jointly!):
+When we minimize $\loss_z^{\text{latent}}$ w.r.t.\ the \textbf{observation encoder} parameters (remember, the encoder is trained jointly!):
 \begin{itemize}[leftmargin=*]
   \item We are minimizing an upper bound on $I(\vz_{t+1};\, \vo_{t+1} \mid \mathcal{H}_t^z)$.
-  \item This pushes the encoder to \emph{reduce the unpredictable information} in the latent.
-  \item The encoder achieves this by not encoding things that the history and language cannot explain (shadows, noise, background changes).
+  \item This pushes the observation encoder to \emph{reduce the unpredictable information} in the latent.
+  \item The encoder achieves this by not encoding things that the latent history and language cannot explain (shadows, noise, background changes).
 \end{itemize}
 
 When we minimize $\loss_z^{\text{latent}}$ w.r.t.\ the \textbf{prior} parameters:
 \begin{itemize}[leftmargin=*]
   \item We are tightening the bound (making the second KL in Eq.~\ref{eq:decompose_kl} smaller).
-  \item The prior gets better at predicting the latent from history and language.
+  \item The prior gets better at denoising the latent from latent history and language.
   \item But this does not change the ``intrinsic unpredictability'' $I(\vz; \vo \mid \mathcal{H})$---it only reduces the modeling gap.
 \end{itemize}
 
-\section{Role of the Action Loss}
+\section{Role of the Action Latent Diffusion Loss}
 
-The latent prior loss alone would push the encoder to discard unpredictable information. But what prevents the encoder from also discarding \emph{predictable} action-relevant information?
+The observation latent prior loss alone would push the observation encoder to discard unpredictable information. But what prevents it from also discarding \emph{predictable} action-relevant information?
 
-The action loss $\loss_a = \|\va_t - \hat{\va}_t\|^2$ adds an inverse dynamics signal: the prior must also recover the action $\va_t$ that \emph{caused} the transition $\vo_t \to \vo_{t+1}$.
+\textbf{The action latent uses the same diffusion objective.}
+Actions are encoded into latent space via $\vb_t = A_\theta(\va_t)$, noised to $\vb_{t,\tau}$, and the prior must jointly denoise both $\vb_{t,\tau}$ and $\vz_{t+1,\tau}$ from the latent history. The action latent loss is:
+\begin{equation}
+  \loss_b = \E_{\tau}\!\left[-\frac{d\lambda_b(\tau)}{d\tau}\,\frac{\exp\lambda_b(\tau)}{2}\,\|\vb_t - \hat{\vb}_\theta(\vb_{t,\tau}, \vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2\right] + \KL[q(\vb_{t,1}|\va_t) \| \mathcal{N}(\bm{0},\bm{I})].
+\end{equation}
 
-This means the latent $\vz_{t+1,\text{clean}}$ must encode the causal effect of $\va_t$: if the action closed the gripper on the red block (as instructed by $\bm{l}$), the latent must show the contact geometry precisely enough to recover this action. Without the action loss, the encoder could collapse to something trivially predictable (e.g., a constant) that the prior matches perfectly but carries no useful information.
+This is the same form as the observation latent loss. The action and observation latents are noised to the same level $\tau$ and denoised jointly by the prior.
 
-Together, the three losses create the equilibrium:
+\textbf{Why this is an inverse dynamics signal:} Given the noised action latent, the noised future observation latent, and the clean latent history, the prior must denoise the action---i.e., figure out what action caused the transition $\vz_t \to \vz_{t+1}$. This requires the observation latent $\vz_{t+1,\text{clean}}$ to encode the causal effect of the action: if the action closed the gripper on the red block (as instructed by $\bm{l}$), the latent must show the contact geometry precisely enough that the prior can denoise the action latent.
+
+\textbf{Action decoder.} After denoising, the action latent $\hat{\vb}_t$ is decoded to a raw action via $\hat{\va}_t = D_\theta^a(\hat{\vb}_t)$. An auxiliary reconstruction loss $\loss_a^{\text{recon}} = \|\va_t - D_\theta^a(\vb_t)\|^2$ ensures the action encoder-decoder pair faithfully represents the action space.
+
+Without the action latent loss, the observation encoder could collapse to something trivially predictable (e.g., a constant) that the prior matches perfectly but carries no useful information.
+
+Together, the losses create the equilibrium:
 \begin{equation}
   \vz_{t+1,\text{clean}}^* = \arg\min_{\vz} \Big[
     \underbrace{I(\vz;\, \vo_{t+1} \mid \mathcal{H}_t^z)}_{\substack{\text{rate: unpredictable bits} \\ \text{(minimize)}}}
     + c_{\text{lf}} \cdot \underbrace{D(\vo_{t+1},\, \hat{\vo}_\theta)}_{\substack{\text{distortion: reconstruction} \\ \text{(minimize)}}}
-    - \gamma \cdot \underbrace{I(\va_t;\, \vz \mid \mathcal{H}_t^z)}_{\substack{\text{action info in latent} \\ \text{(maximize)}}}
+    - \gamma \cdot \underbrace{I(\vb_t;\, \vz \mid \mathcal{H}_t^z)}_{\substack{\text{action-obs coupling} \\ \text{(maximize)}}}
   \Big].
 \end{equation}
 
 \section{Concrete Numerical Intuition}
 
-Suppose at some point during training, the latent $\vz_{t+1,\text{clean}}$ encodes 100 bits of information about $\vo_{t+1}$:
+Suppose at some point during training, the observation latent $\vz_{t+1,\text{clean}}$ encodes 100 bits of information about $\vo_{t+1}$:
 \begin{itemize}[leftmargin=*]
-  \item 70 bits are about gripper/object geometry (predictable from history and language).
+  \item 70 bits are about gripper/object geometry (predictable from latent history and language).
   \item 30 bits are about background texture and lighting (unpredictable).
 \end{itemize}
 
-The prior can predict the 70 predictable bits well (low MSE on those components). But it cannot predict the 30 unpredictable bits (high MSE on those components).
+The prior can denoise the 70 predictable bits well (low MSE on those components). But it cannot denoise the 30 unpredictable bits (high MSE on those components).
 
-The loss $\loss_z^{\text{latent}} \geq 30$ bits. Since the encoder is being optimized to reduce this loss, it has two options:
+The loss $\loss_z^{\text{latent}} \geq 30$ bits. Since the observation encoder is being optimized to reduce this loss, it has two options:
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Stop encoding the 30 unpredictable bits} $\to$ loss drops to $\approx 0$ (plus modeling error).
-  \item \textbf{Keep encoding them and hope the prior learns to predict them} $\to$ impossible, because they are genuinely random (not a function of the history or language).
+  \item \textbf{Keep encoding them and hope the prior learns to denoise them} $\to$ impossible, because they are genuinely random (not a function of the latent history or language).
 \end{enumerate}
 
-The encoder takes option 1. After training, the latent contains $\approx 70$ bits of action-relevant geometry.
+The observation encoder takes option 1. After training, the latent contains $\approx 70$ bits of action-relevant geometry.
 
 Meanwhile, the decoder loss $\loss_x$ pushes back: discarding those 30 bits makes reconstruction worse. The loss factor $c_{\text{lf}}$ controls the trade-off. With $c_{\text{lf}} = 1.5$, the decoder gets 1.5$\times$ weight, so the encoder keeps \emph{slightly more} information than the strict minimum---but only information that is at least partially predictable, not pure noise.
 
-And the action loss $\loss_a$ ensures that among the retained bits, the \emph{action-causal} geometry is prioritized: the latent must encode enough about the transition $\vz_t \to \vz_{t+1}$ to recover the action $\va_t$ that caused it.
+And the action latent diffusion loss $\loss_b$ ensures that among the retained bits, the \emph{action-causal} geometry is prioritized: the observation latent must encode enough about the transition $\vz_t \to \vz_{t+1}$ that the prior can jointly denoise the action latent $\vb_t$ that caused it. The denoised $\hat{\vb}_t$ is then decoded to the raw action $\hat{\va}_t = D_\theta^a(\hat{\vb}_t)$.
 
 \end{document}

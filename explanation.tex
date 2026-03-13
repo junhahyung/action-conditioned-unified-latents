@@ -10,6 +10,7 @@
 \newcommand{\vo}{\bm{o}}
 \newcommand{\vz}{\bm{z}}
 \newcommand{\va}{\bm{a}}
+\newcommand{\vb}{\bm{b}}
 \newcommand{\loss}{\mathcal{L}}
 \newcommand{\E}{\mathbb{E}}
 
@@ -22,97 +23,115 @@
 
 \section{Setup}
 
-The encoder maps observation $\vo_{t+1}$ to latent $\vz_{t+1,\text{clean}}$.
-The dynamics prior must predict both the current action $\va_t$ \emph{and} the resulting future latent $\vz_{t+1,\text{clean}}$ from the history and language instruction:
-\[
-  \mathcal{H}_t^z = (\bm{l},\; \vz_{t-H+1,\text{clean}},\; \va_{t-H},\; \vz_{t-H+2,\text{clean}},\; \va_{t-H+1},\; \ldots,\; \va_{t-1},\; \vz_{t,\text{clean}}).
-\]
-Here $\bm{l}$ is the language instruction (e.g., ``pick up the red block''), $\vz_{k,\text{clean}}$ are past observation latents, and $\va_{k}$ are past actions.
+We have two encoders:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Observation encoder:} $\vz_{k,\text{clean}} = E_\theta(\vo_k)$ --- maps each observation to a latent.
+  \item \textbf{Action encoder:} $\vb_k = A_\theta(\va_k)$ --- maps each raw action to an action latent.
+\end{itemize}
 
-\textbf{Key autoregressive structure:} At the previous time step, the model generated $(\va_{t-1}, \vz_t)$---the action $\va_{t-1}$ \emph{caused} the transition to observation $\vo_t$ (encoded as $\vz_t$). Now at time $t$, the model generates $(\va_t, \vz_{t+1})$: the action $\va_t$ to execute now, and the frame $\vz_{t+1}$ that will \emph{result from} executing $\va_t$.
+The dynamics prior must jointly \emph{denoise} the current action latent $\vb_t$ and the resulting future observation latent $\vz_{t+1,\text{clean}}$ from the latent history and language instruction:
+\[
+  \mathcal{H}_t^z = (\bm{l},\; \vz_{t-H+1,\text{clean}},\; \vb_{t-H},\; \vz_{t-H+2,\text{clean}},\; \vb_{t-H+1},\; \ldots,\; \vb_{t-1},\; \vz_{t,\text{clean}}).
+\]
+Here $\bm{l}$ is the language instruction (e.g., ``pick up the red block''), $\vz_{k,\text{clean}}$ are past observation latents, and $\vb_k$ are past action latents.
+
+\textbf{Key autoregressive structure:} At the previous time step, the model denoised $(\vb_{t-1}, \vz_t)$---the action latent $\vb_{t-1}$ corresponds to the action that \emph{caused} the transition to observation $\vo_t$ (encoded as $\vz_t$). Now at time $t$, the model denoises $(\vb_t, \vz_{t+1})$: the action latent $\vb_t$ to execute now (decoded via $D_\theta^a(\vb_t)$ to get the raw action), and the frame $\vz_{t+1}$ that will \emph{result from} executing that action.
+
+\textbf{Both modalities use the same diffusion objective.}
+Given a shared noise level $\tau$, we noise both targets:
+\begin{align}
+  \vz_{t+1,\tau} &= \alpha_z(\tau)\,\vz_{t+1,\text{clean}} + \sigma_z(\tau)\,\epsilon_z, \\
+  \vb_{t,\tau} &= \alpha_b(\tau)\,\vb_t + \sigma_b(\tau)\,\epsilon_b.
+\end{align}
+
+The joint prior denoises both simultaneously:
+\[
+  (\hat{\vb}_t, \hat{\vz}_{t+1}) = \hat{f}_\theta^{\text{dyn}}(\vb_{t,\tau}, \vz_{t+1,\tau}, \mathcal{H}_t^z).
+\]
 
 The joint prior loss is:
 \begin{equation}
-  \loss_z^{\text{joint}} = \underbrace{\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta(\vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2}_{\text{latent MSE (forward dynamics)}} + \gamma \cdot \underbrace{\|\va_t - \hat{\va}_\theta(\vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2}_{\text{action MSE (inverse dynamics)}}.
+  \loss_z^{\text{joint}} = \underbrace{\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta\|^2}_{\text{obs.\ latent denoising (forward dynamics)}} + \gamma \cdot \underbrace{\|\vb_t - \hat{\vb}_\theta\|^2}_{\text{action latent denoising (inverse dynamics)}}.
   \label{eq:joint_prior}
 \end{equation}
 
-(The diffusion weighting $-\frac{d\lambda_z(\tau)}{d\tau}\frac{\exp\lambda_z(\tau)}{2}$ is omitted for clarity; it only rescales the latent MSE across noise levels.)
+(The diffusion weighting $-\frac{d\lambda(\tau)}{d\tau}\frac{\exp\lambda(\tau)}{2}$ is omitted for clarity; it only rescales the MSE across noise levels.)
 
-The two MSE terms play complementary roles:
+The two diffusion MSE terms play complementary roles:
 \begin{itemize}[leftmargin=*]
-  \item \textbf{Latent MSE (forward dynamics):} The prior must predict $\vz_{t+1}$---what will happen after executing $\va_t$, given the history and language goal. This penalizes encoding anything unpredictable.
-  \item \textbf{Action MSE (inverse dynamics):} The prior must recover $\va_t$---what action caused the transition $\vz_t \to \vz_{t+1}$. This prevents the encoder from collapsing to a trivially predictable but uninformative representation.
+  \item \textbf{Observation latent denoising (forward dynamics):} The prior must denoise $\vz_{t+1}$---what will happen after executing the action, given the history and language goal. This penalizes encoding anything unpredictable.
+  \item \textbf{Action latent denoising (inverse dynamics):} The prior must denoise $\vb_t$---what action caused the transition $\vz_t \to \vz_{t+1}$. This prevents the observation encoder from collapsing to a trivially predictable but uninformative representation, and forces the action encoder to encode actions in a denoising-compatible form.
 \end{itemize}
 
 \section{Two Types of Information}
 
-Consider what the encoder could put into $\vz_{t+1,\text{clean}}$.
+Consider what the observation encoder could put into $\vz_{t+1,\text{clean}}$.
 There are two kinds of information:
 
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Predictable content} (e.g., gripper moved to grasp the red block because the language instruction said ``pick up the red block'' and the history shows the gripper approaching):
-  The prior \emph{can} predict this from the history $\mathcal{H}_t^z$ (past frames, past actions, and language goal), so the latent MSE stays low.
+  The prior \emph{can} predict this from the latent history $\mathcal{H}_t^z$ (past observation latents, past action latents, and language goal), so the observation latent MSE stays low.
   This information is ``free''---it does not increase the prior loss.
 
   \item \textbf{Unpredictable content} (e.g., a shadow flickered, a background texture changed, camera noise):
-  The prior \emph{cannot} predict this from $(\bm{l}, \vz_{t-H+1:t,\text{clean}}, \va_{t-H:t-1})$ because nothing in the history or language instruction explains it.
-  This spikes the latent MSE, increasing the prior loss.
+  The prior \emph{cannot} predict this from $(\bm{l}, \vz_{t-H+1:t,\text{clean}}, \vb_{t-H:t-1})$ because nothing in the latent history or language instruction explains it.
+  This spikes the observation latent MSE, increasing the prior loss.
 \end{enumerate}
 
-\section{The Trade-Off (Three-Way Pressure)}
+\section{The Trade-Off (Four-Way Pressure)}
 
 The total Stage~1 loss is:
 \begin{equation}
-  \loss_{\text{S1}} = \underbrace{\loss_z^{\text{latent}}}_{\text{penalizes unpredictable info}} + \gamma \cdot \underbrace{\loss_a}_{\text{rewards action-relevant info}} + c_{\text{lf}} \cdot \underbrace{\loss_x}_{\text{rewards reconstruction info}}.
+  \loss_{\text{S1}} = \underbrace{\loss_z^{\text{latent}}}_{\text{obs.\ latent diffusion}} + \gamma \cdot \underbrace{\loss_b}_{\text{action latent diffusion}} + c_{\text{lf}} \cdot \underbrace{\loss_x}_{\text{reconstruction}} + \underbrace{\loss_a^{\text{recon}}}_{\text{action reconstruction}}.
   \label{eq:total}
 \end{equation}
 
 \begin{itemize}[leftmargin=*]
   \item The \textbf{decoder loss} $\loss_x$ wants \emph{more} information in $\vz_{t+1,\text{clean}}$ (better reconstruction of $\vo_{t+1}$).
-  \item The \textbf{latent prior loss} $\loss_z^{\text{latent}}$ penalizes information that the prior cannot predict from history and language.
-  \item The \textbf{action loss} $\loss_a$ requires the latent to encode the causal effect of $\va_t$---the action that \emph{caused} $\vo_{t+1}$.
-  \item At equilibrium, the encoder keeps only what the prior can predict (physics that the interaction history and language goal explain), plus enough action-relevant detail to recover the causal action.
+  \item The \textbf{observation latent prior loss} $\loss_z^{\text{latent}}$ penalizes information that the prior cannot denoise from the latent history and language.
+  \item The \textbf{action latent prior loss} $\loss_b$ uses the same diffusion objective to ensure the action latent can be denoised from the latent history---requiring the latent to encode the causal effect of the action that \emph{caused} $\vo_{t+1}$.
+  \item The \textbf{action reconstruction loss} $\loss_a^{\text{recon}} = \|\va_t - D_\theta^a(\vb_t)\|^2$ ensures the action encoder-decoder pair faithfully represents the action space.
+  \item At equilibrium, both encoders keep only what the prior can denoise (physics that the interaction history and language goal explain), plus enough action-relevant detail to recover the causal action.
 \end{itemize}
 
 The information decomposition makes this precise:
 \begin{equation}
-  I(\vz_{t+1,\text{clean}};\, \vo_{t+1}) = \underbrace{I(\vz_{t+1,\text{clean}};\, \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{unpredictable (penalized by } \loss_z^{\text{latent}}\text{)}} + \underbrace{I(\vz_{t+1,\text{clean}};\, \mathcal{H}_t^z)}_{\text{predictable from history + language (free)}}.
+  I(\vz_{t+1,\text{clean}};\, \vo_{t+1}) = \underbrace{I(\vz_{t+1,\text{clean}};\, \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{unpredictable (penalized by } \loss_z^{\text{latent}}\text{)}} + \underbrace{I(\vz_{t+1,\text{clean}};\, \mathcal{H}_t^z)}_{\text{predictable from latent history (free)}}.
   \label{eq:info_decomp}
 \end{equation}
 
-The prior loss upper-bounds the first term (see explanation2.pdf for the full proof).
+The observation latent prior loss upper-bounds the first term (see explanation2.pdf for the full proof).
 The decoder loss incentivizes maximizing the total.
-The action loss ensures the latent captures the causal effect of $\va_t$.
-Together, they push the encoder to maximize predictable, action-relevant information and discard unpredictable information.
+The action latent prior loss ensures the latent captures the causal effect of the action via the same diffusion objective.
+Together, they push both encoders to maximize predictable, action-relevant information and discard unpredictable information.
 
-\section{Why the Action Loss is Necessary}
+\section{Why the Action Latent Diffusion Loss is Necessary}
 
-\textbf{Without the action loss ($\gamma = 0$)}, the encoder could trivially minimize $\loss_z^{\text{latent}}$ by encoding a constant---perfectly predictable but completely uninformative.
+\textbf{Without the action latent loss ($\gamma = 0$)}, the observation encoder could trivially minimize $\loss_z^{\text{latent}}$ by encoding a constant---perfectly predictable but completely uninformative.
 The decoder loss would fight this, but the result would be a poor equilibrium where the latent captures some visual content without any guarantee of action-relevance.
 
-\textbf{With the action loss ($\gamma > 0$)}, the prior must also recover $\va_t$ from $(\vz_{t+1,\tau}, \mathcal{H}_t^z)$.
-This is an \emph{inverse dynamics} signal: given the history and the resulting next frame, what action must have been taken?
-The latent transition $\vz_t \to \vz_{t+1}$ must be informative enough to infer what action caused it.
+\textbf{With the action latent diffusion loss ($\gamma > 0$)}, the prior must also denoise $\vb_t$ from $(\vb_{t,\tau}, \vz_{t+1,\tau}, \mathcal{H}_t^z)$.
+This is an \emph{inverse dynamics} signal via diffusion: given the noised action latent, the noised observation latent, and the history, denoise the action that caused the transition.
+The latent transition $\vz_t \to \vz_{t+1}$ must be informative enough that the action can be denoised from its noisy version.
 
-Concretely, if $\va_t$ commands the gripper to close on the red block (as instructed by $\bm{l}$), the latent $\vz_{t+1,\text{clean}}$ must encode the resulting contact geometry precisely enough that the prior can reconstruct the action.
-If the latent discards this information, $\|\va_t - \hat{\va}_t\|^2$ spikes.
+Concretely, if $\va_t$ commands the gripper to close on the red block (as instructed by $\bm{l}$), the action encoder must encode this into $\vb_t$, and the observation latent $\vz_{t+1,\text{clean}}$ must encode the resulting contact geometry such that the prior can jointly denoise both.
+The denoised action latent $\hat{\vb}_t$ is then decoded via $D_\theta^a(\hat{\vb}_t)$ to recover the raw action $\hat{\va}_t$.
 
-The rate-distortion equilibrium with action loss is:
+The rate-distortion equilibrium is:
 \begin{equation}
   \vz_{t+1,\text{clean}}^* = \arg\min_{\vz} \Big[
     \underbrace{I(\vz;\, \vo_{t+1} \mid \mathcal{H}_t^z)}_{\substack{\text{rate: unpredictable bits} \\ \text{(minimize)}}}
     + c_{\text{lf}} \cdot \underbrace{D(\vo_{t+1},\, \hat{\vo}_\theta)}_{\substack{\text{distortion: reconstruction} \\ \text{(minimize)}}}
-    - \gamma \cdot \underbrace{I(\va_t;\, \vz \mid \mathcal{H}_t^z)}_{\substack{\text{action info in latent} \\ \text{(maximize)}}}
+    - \gamma \cdot \underbrace{I(\vb_t;\, \vz \mid \mathcal{H}_t^z)}_{\substack{\text{action-obs coupling} \\ \text{(maximize)}}}
   \Big].
   \label{eq:rd_action}
 \end{equation}
 
 The three terms create a balanced pressure:
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Rate} ($\loss_z^{\text{latent}}$): Compress out everything unpredictable from history and language.
+  \item \textbf{Rate} ($\loss_z^{\text{latent}}$): Compress out everything unpredictable from latent history and language.
   \item \textbf{Distortion} ($\loss_x$): Retain enough information for good reconstruction.
-  \item \textbf{Action info} ($\loss_a$): Ensure the latent transition encodes the causal effect of $\va_t$ (the action that caused $\vo_{t+1}$).
+  \item \textbf{Action-obs coupling} ($\loss_b$): Ensure the observation latent and action latent are mutually informative---the latent transition encodes the causal effect of the action, and the action latent is jointly denoised.
 \end{enumerate}
 
 The result is a latent that encodes \emph{exactly the action-predictable physical geometry}:
@@ -124,7 +143,7 @@ The claim is somewhat idealized. In practice:
 \begin{itemize}[leftmargin=*]
   \item The prior has finite capacity, so some predictable information may still be penalized if the prior network cannot learn the dynamics well enough.
   \item The loss factor $c_{\text{lf}}$ controls the trade-off: large $c_{\text{lf}}$ lets more information through (decoder wins), small $c_{\text{lf}}$ compresses harder (prior wins).
-  \item ``Mathematically forced'' is strong language---it is more accurate to say the loss \emph{incentivizes} the encoder in this direction.
+  \item ``Mathematically forced'' is strong language---it is more accurate to say the loss \emph{incentivizes} the encoders in this direction.
     The bound is tight only when $w(\lambda) = 1$, and the loss factor loosens it further.
 \end{itemize}
 
