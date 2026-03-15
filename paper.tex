@@ -147,6 +147,7 @@ The reconstruction term uses a diffusion decoder conditioned on $\vz_0$:
   \label{eq:ul_decoder}
 \end{equation}
 with sigmoid weighting $w_x(\lambda_x(t)) = \sigmoid(\lambda_x(t) - b)$ and a loss factor $c_{\text{lf}} \in [1.3, 1.7]$ that up-weighs the decoder to prevent posterior collapse.
+In our method, we depart from UL by using a pretrained deterministic decoder instead of a diffusion decoder (see \Cref{sec:decoder}).
 
 \subsection{Autoregressive Video-Action Models}
 \label{sec:dreamzero_background}
@@ -340,27 +341,29 @@ The total information in the latent can be decomposed as:
 \end{equation}
 The prior loss $\loss_z^{\text{latent}}$ upper-bounds the first term (see \Cref{sec:theory} for proof). The decoder loss $\loss_x$ incentivizes maximizing total information. The action latent loss $\loss_b$ ensures the latent captures the causal effect of actions (inverse dynamics signal) via the same diffusion objective. Together, they push both encoders toward representations that are maximally informative about action-predictable physics while discarding everything else.
 
-\subsection{Diffusion Decoder for Future Frame Reconstruction}
+\subsection{Deterministic Decoder for Future Frame Reconstruction}
 \label{sec:decoder}
 
-The decoder operates exactly as in standard UL but reconstructs the \emph{future} observation $\vo_{t+1}$. The noisy image is:
-\begin{equation}
-  \vo_{t+1,\tau} = \alpha_x(\tau)\,\vo_{t+1} + \sigma_x(\tau)\,\vep, \quad \vep \sim \mathcal{N}(\bm{0}, \bm{I}),
-  \label{eq:forward_image}
-\end{equation}
-with its own log-SNR schedule $\lambda_x(\tau)$.
+Unlike the original UL framework which uses a diffusion decoder, we use the \emph{pretrained deterministic Wan2.1 VAE decoder} $D_\theta$ to reconstruct observations from latents.
+This is a practical choice: the Wan2.1 VAE already provides a high-quality deterministic decoder, and training a diffusion decoder from scratch would negate the benefits of pretraining.
 
-The decoder network $D_\theta = \hat{\vo}(\vo_{t+1,\tau}, \vz_{t+1,0}, \theta)$ conditions on both the noisy image and the slightly noisy future latent $\vz_{t+1,0}$. The reconstruction bound is:
+Given the clean future latent $\vz_{t+1,\text{clean}} = E_\theta(\vo_{t+1})$, the decoder reconstructs:
 \begin{equation}
-  -\log p_\theta(\vo_{t+1} \mid \vz_{t+1,0}) \leq
-  \E_{\tau \sim \mathcal{U}(0,1)}\!\left[
-    \frac{d\lambda_x(\tau)}{d\tau}\,\frac{\exp\lambda_x(\tau)}{2}\,
-    w_x(\lambda_x(\tau))\,
-    \|\vo_{t+1} - \hat{\vo}(\vo_{t+1,\tau}, \vz_{t+1,0}, \theta)\|^2
-  \right],
-  \label{eq:ac_decoder_loss}
+  \hat{\vo}_{t+1} = D_\theta(\vz_{t+1,\text{clean}}).
+  \label{eq:deterministic_decode}
 \end{equation}
-with sigmoid weighting $w_x(\lambda_x(\tau)) = \sigmoid(\lambda_x(\tau) - b)$ and loss factor $c_{\text{lf}} \in [1.3, 1.7]$.
+
+The reconstruction loss combines pixel-level and perceptual terms:
+\begin{equation}
+  \loss_x(\theta) = \|\vo_{t+1} - \hat{\vo}_{t+1}\|^2 + \lambda_{\text{perc}} \cdot \loss_{\text{perc}}(\vo_{t+1}, \hat{\vo}_{t+1}),
+  \label{eq:recon_loss}
+\end{equation}
+where $\loss_{\text{perc}}$ is a perceptual loss (e.g., LPIPS) and $\lambda_{\text{perc}}$ controls its weight.
+
+\textbf{Relation to the UL bound.}
+In the original UL formulation, the diffusion decoder provides a tight variational bound on $-\log p_\theta(\vo_{t+1} \mid \vz_{t+1,0})$.
+With a deterministic decoder, this bound becomes approximate: $\loss_x$ serves as a proxy for the decoder term in the ELBO, ensuring the latent retains sufficient information for reconstruction without the formal diffusion bound.
+The loss factor $c_{\text{lf}} \in [1.3, 1.7]$ controls the reconstruction-compression trade-off, analogous to its role in UL.
 
 \subsection{Action Decoder}
 \label{sec:action_decoder}
@@ -390,7 +393,7 @@ The total per-transition loss combines the joint prior loss, the decoder loss, a
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item $\loss_z^{\text{latent}}$: Diffusion denoising loss for the observation latent. Penalizes unpredictable information in the future latent given the history. Forces the observation encoder to discard action-irrelevant content.
   \item $\loss_b$: Diffusion denoising loss for the action latent. Uses the same diffusion objective as $\loss_z^{\text{latent}}$. Requires the latent history to contain enough dynamics structure that the action can be denoised. Prevents trivial latent collapse.
-  \item $\loss_x$: Observation reconstruction loss. Rewards information that aids reconstruction. Ensures the latent retains fine geometric detail (e.g., gripper-object distance).
+  \item $\loss_x$: Observation reconstruction loss (MSE + perceptual). Rewards information that aids reconstruction via the pretrained deterministic Wan decoder. Ensures the latent retains fine geometric detail (e.g., gripper-object distance).
   \item $\loss_a^{\text{recon}}$: Action reconstruction loss. Ensures the action encoder-decoder pair faithfully represents actions.
 \end{itemize}
 
@@ -418,11 +421,9 @@ The complete Stage~1 training procedure is given in \Cref{alg:stage1}.
 \STATE $\loss_b = -\frac{d\lambda_b(\tau)}{d\tau}\,\frac{\exp\lambda_b(\tau)}{2}\,\|\vb_t - \hat{\vb}_t\|^2 + \KL[p(\vb_{t,1}|\va_t)\|\mathcal{N}(\bm{0},\bm{I})]$
 \STATE \textbf{// Action reconstruction loss}
 \STATE $\loss_a^{\text{recon}} = \|\va_t - D_\theta^a(\vb_t)\|^2$
-\STATE \textbf{// Decoder loss}
-\STATE Sample $\tau' \sim \mathcal{U}(0,1)$, $\vep' \sim \mathcal{N}(\bm{0}, \bm{I})$, $\vep_z' \sim \mathcal{N}(\bm{0}, \bm{I})$
-\STATE $\vz_{t+1,0} = \alpha_z(0)\,\vz_{t+1,\text{clean}} + \sigma_z(0)\,\vep_z'$
-\STATE $\vo_{t+1,\tau'} = \alpha_x(\tau')\,\vo_{t+1} + \sigma_x(\tau')\,\vep'$
-\STATE $\loss_x = \frac{d\lambda_x(\tau')}{d\tau'}\,\frac{\exp\lambda_x(\tau')}{2}\,w_x(\lambda_x(\tau'))\,\|\vo_{t+1} - \hat{\vo}(\vo_{t+1,\tau'}, \vz_{t+1,0}, \theta)\|^2$
+\STATE \textbf{// Reconstruction loss (deterministic decoder)}
+\STATE $\hat{\vo}_{t+1} = D_\theta(\vz_{t+1,\text{clean}})$
+\STATE $\loss_x = \|\vo_{t+1} - \hat{\vo}_{t+1}\|^2 + \lambda_{\text{perc}} \cdot \loss_{\text{perc}}(\vo_{t+1}, \hat{\vo}_{t+1})$
 \STATE \textbf{// Combined loss}
 \STATE $\loss_{\text{S1}} = \loss_z^{\text{latent}} + \gamma \cdot \loss_b + c_{\text{lf}} \cdot \loss_x + \loss_a^{\text{recon}}$
 \STATE Update $\theta$ by gradient descent on $\loss_{\text{S1}}$
@@ -433,8 +434,8 @@ The complete Stage~1 training procedure is given in \Cref{alg:stage1}.
 \label{sec:architecture}
 
 \textbf{Observation encoder $E_\theta$ and decoder $D_\theta$.}
-We initialize $E_\theta$ and $D_\theta$ from a pretrained video VAE.
-In our experiments we use a Wan2.1-based VAE~\citep{wan2025} which encodes $320 \times 176$ RGB frames into $c = 16$ channel latents at $8\times$ spatial downsampling.
+We initialize $E_\theta$ and $D_\theta$ from the pretrained Wan2.1 VAE~\citep{wan2025}, which encodes $320 \times 176$ RGB frames into $c = 16$ channel latents at $8\times$ spatial downsampling.
+The decoder is deterministic (not a diffusion decoder): $\hat{\vo} = D_\theta(\vz_{\text{clean}})$.
 Multi-view observations (e.g., three camera views in DROID) are composited into a single image following DreamZero's convention.
 During Stage~1 fine-tuning, the VAE encoder and decoder parameters are updated via LoRA~\citep{hu2022lora} adapters (rank $r = 4$) to adapt the latent space while preserving pretrained visual features.
 
@@ -449,7 +450,8 @@ An embodiment-specific MLP that maps denoised action latents $\hat{\vb}_t \in \R
 An embodiment-specific MLP that encodes proprioceptive state $\bm{s}_t \in \R^{d_s}$ into a single conditioning token of dimension $d_b$.
 
 \textbf{Joint dynamics prior $\hat{f}_\theta^{\text{dyn}}$.}
-A causal diffusion transformer (DiT), initialized from a pretrained video generation model at ${\sim}2$B parameter scale and fine-tuned with LoRA.
+A causal diffusion transformer (DiT), initialized from a pretrained Wan2.1 video generation model at ${\sim}2$B parameter scale and fine-tuned with LoRA.
+Initializing from pretrained Wan weights provides a strong starting point for dynamics modeling, as the pretrained model already captures visual transition priors from large-scale video data.
 The input sequence follows DreamZero's blockwise structure: language tokens, followed by blocks of interleaved observation and action latent tokens, plus state tokens:
 \begin{equation}
   \big[\text{text\_enc}(\bm{l}),\; \text{patchify}(\vz_{t-H+1}),\; \text{mlp}(\vb_{t-H}),\; \text{mlp}(\bm{s}),\; \ldots,\; \text{patchify}(\vz_{t}),\; \text{mlp}(\vb_{t,\tau}),\; \text{patchify}(\vz_{t+1,\tau})\big].
@@ -470,7 +472,9 @@ The model uses \emph{blockwise causal attention} (following DreamZero): within e
 
 Once Stage~1 converges, we freeze the fine-tuned observation encoder $E_\theta$, action encoder $A_\theta$, observation decoder $D_\theta$, and action decoder $D_\theta^a$. The frozen encoders now provide a \emph{physics-grounded vocabulary} whose latent space has been adapted to contain action-predictable geometry.
 
-For Stage~2, we train the full-scale autoregressive diffusion transformer (CausalWanModel, ${\sim}2$B parameters) on the frozen AC-UL latent space, following the DreamZero training recipe but on action-optimized latents instead of generic VAE latents.
+For Stage~2, we train the full-scale autoregressive diffusion transformer (CausalWanModel, ${\sim}2$B parameters) on the frozen AC-UL latent space.
+The Stage~2 DiT is also initialized from pretrained Wan2.1 weights and fine-tuned with LoRA (rank $r = 4$), following the DreamZero training recipe but operating on action-optimized latents instead of generic VAE latents.
+This pretrained initialization is critical: training a ${\sim}2$B DiT from scratch on DROID alone (${\sim}76$K trajectories) would be insufficient, whereas LoRA fine-tuning adapts the pretrained video generation prior to the AC-UL latent space with modest data requirements.
 
 \subsection{Latent Trajectory Extraction}
 
@@ -577,8 +581,8 @@ Starting from the ELBO applied to the conditional model with joint latent $(\vz_
   &\quad - \E_{\vb_{t,0}}\!\Big[\log p_\theta(\va_t \mid \vb_{t,0})\Big].
   \label{eq:proof_step}
 \end{align}
-Applying the diffusion bounds (\Cref{eq:ac_prior_loss,eq:action_latent_loss,eq:ac_decoder_loss}) to the first three terms, and bounding $-\log p_\theta(\va_t \mid \vb_{t,0}) \leq \|\va_t - D_\theta^a(\vb_t)\|^2$ (Gaussian action likelihood) for the fourth term, yields the result.
-The loss factor $c_{\text{lf}}$ loosens the bound but improves optimization by preventing posterior collapse.
+Applying the diffusion bounds (\Cref{eq:ac_prior_loss,eq:action_latent_loss}) to the KL terms, bounding $-\log p_\theta(\va_t \mid \vb_{t,0}) \leq \|\va_t - D_\theta^a(\vb_t)\|^2$ (Gaussian action likelihood) for the fourth term, and using the reconstruction loss $\loss_x$ (\Cref{eq:recon_loss}) as a proxy for the decoder term $-\log p_\theta(\vo_{t+1} \mid \vz_{t+1,0})$, yields the result.
+\textbf{Note:} Because we use a deterministic decoder rather than a diffusion decoder, the bound on the decoder term is approximate rather than tight. The loss factor $c_{\text{lf}}$ controls the reconstruction-compression trade-off and prevents posterior collapse.
 \end{proof}
 
 \subsection{Information-Theoretic Interpretation}
@@ -957,7 +961,7 @@ FLARE adds future latent prediction as an auxiliary loss using frozen SigLIP-2 f
   \item \textbf{Two-stage training:} Stage~1 requires fine-tuning the VAE and training action encoder/decoder/prior simultaneously, adding training cost over DreamZero's single-stage LoRA fine-tuning.
   \item \textbf{VAE fine-tuning risk:} Aggressive fine-tuning of the pretrained VAE could degrade general visual features. LoRA mitigates this but limits the degree of latent space adaptation.
   \item \textbf{Fixed encoders at Stage~2:} If Stage~1 fine-tuning is suboptimal, Stage~2 inherits these limitations.
-  \item \textbf{Real-time inference:} The observation diffusion decoder adds latency for visualization; however, the action can be extracted by decoding only the lightweight action latent.
+  \item \textbf{Approximate bound:} Using a deterministic Wan decoder instead of a diffusion decoder makes the ELBO decoder term approximate rather than tight. In practice, the reconstruction loss with perceptual terms provides an effective proxy.
 \end{itemize}
 
 %=====================================================================
