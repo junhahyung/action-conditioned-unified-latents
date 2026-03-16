@@ -56,7 +56,7 @@ We introduce \textbf{Action-Conditioned Unified Latents (AC-UL)}, a framework th
 Starting from a pretrained video VAE and diffusion transformer, we add a learned action encoder and jointly fine-tune the system so that the dynamics prior must \emph{jointly denoise} the current action latent $\vb_t$ and the next observation latent $\vz_{t+1}$---the frame that results from executing the action---unifying world modeling and policy learning in a single generative process.
 Both observations and actions are encoded into compact latent spaces and denoised with a shared diffusion objective.
 By conditioning the diffusion prior on the observation-action latent history, proprioceptive state, and language goal, the variational bound incentivizes the encoder to discard unpredictable content while retaining the physical geometry that the history of interactions can predict.
-In Stage~1, a pretrained video VAE and a lightweight dynamics prior are fine-tuned with the AC-UL objective alongside newly trained action encoder/decoder components; in Stage~2, the frozen fine-tuned encoders provide a physics-grounded vocabulary on which an autoregressive diffusion transformer is trained for joint video-action generation, enabling closed-loop planning via iterative rollouts.
+In Stage~1, a pretrained video VAE and a pretrained diffusion transformer (serving as the dynamics prior) are jointly fine-tuned with LoRA under the AC-UL objective alongside newly trained action encoder/decoder components; in Stage~2, the frozen fine-tuned encoders provide a physics-grounded vocabulary on which the autoregressive diffusion transformer is further fine-tuned for joint video-action generation, enabling closed-loop planning via iterative rollouts.
 We evaluate AC-UL on the DROID real-world manipulation dataset and show that a 1.3B AC-UL model can match or outperform the 14B DreamZero baseline, demonstrating that adapting the latent space for action-relevant content is more effective than scaling model parameters on generic representations.
 \end{abstract}
 
@@ -89,7 +89,7 @@ This formulation follows the autoregressive structure of DreamZero~\citep{dreamz
 Our contributions are:
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
   \item We derive the \textbf{Action-Conditioned Unified Latent (AC-UL)} objective, extending the UL variational bound to history-conditioned \emph{joint} observation-action dynamics with learned action encoding and a unified diffusion objective for both modalities (\Cref{sec:method}).
-  \item We provide a complete \textbf{two-stage training algorithm}: Stage~1 fine-tunes a pretrained video VAE and trains a dynamics prior with the AC-UL objective alongside learned action encoder/decoder components; Stage~2 trains an autoregressive diffusion transformer on frozen AC-UL latents for joint video-action generation (\Cref{sec:stage2}).
+  \item We provide a complete \textbf{two-stage training algorithm}: Stage~1 fine-tunes a pretrained video VAE and a pretrained diffusion transformer (as dynamics prior) with LoRA under the AC-UL objective alongside learned action encoder/decoder components; Stage~2 further fine-tunes the same pretrained diffusion transformer on frozen AC-UL latents for autoregressive joint video-action generation (\Cref{sec:stage2}).
   \item We demonstrate on the \textbf{DROID} real-world manipulation dataset that a \textbf{1.3B AC-UL model matches or outperforms a 14B DreamZero baseline} across closed-loop planning, imitation learning, and video-action prediction, showing that better latent representations outweigh raw model scale (\Cref{sec:experiments}).
 \end{enumerate}
 
@@ -1044,7 +1044,7 @@ FLARE adds future latent prediction as an auxiliary loss using frozen SigLIP-2 f
 \subsection{Limitations}
 
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \textbf{Two-stage training:} Stage~1 requires fine-tuning the VAE and training action encoder/decoder/prior simultaneously, adding training cost over DreamZero's single-stage LoRA fine-tuning.
+  \item \textbf{Two-stage training:} Stage~1 requires fine-tuning the VAE and DiT (as dynamics prior) simultaneously with the action encoder/decoder, adding training cost over DreamZero's single-stage LoRA fine-tuning.
   \item \textbf{VAE fine-tuning risk:} Aggressive fine-tuning of the pretrained VAE could degrade general visual features. LoRA mitigates this but limits the degree of latent space adaptation.
   \item \textbf{Fixed encoders at Stage~2:} If Stage~1 fine-tuning is suboptimal, Stage~2 inherits these limitations.
   \item \textbf{Approximate bound:} Two relaxations make the ELBO approximate: (1)~the flow matching prior uses reweighted denoising ($w_{\text{FM}}$ instead of $w_{\KL}$), and (2)~the deterministic Wan decoder replaces the diffusion decoder bound. The information bottleneck property is preserved (\Cref{sec:fm_approx}), but the bound is no longer tight.
