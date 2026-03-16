@@ -54,7 +54,7 @@ Learning compact, physics-grounded visual representations is a central challenge
 Existing approaches either use generic pretrained video VAEs---whose latent spaces retain task-irrelevant visual details---or frozen pretrained features that discard action-relevant geometric information.
 We introduce \textbf{Action-Conditioned Unified Latents (AC-UL)}, a framework that applies the Unified Latents (UL) variational objective to \emph{fine-tune} a pretrained video model for autoregressive state-action dynamics.
 Starting from a pretrained video VAE and diffusion transformer, we add a learned action encoder and jointly fine-tune the system so that the dynamics prior must \emph{jointly denoise} the current action latent $\vb_t$ and the next observation latent $\vz_{t+1}$---the frame that results from executing the action---unifying world modeling and policy learning in a single generative process.
-Both observations and actions are encoded into compact latent spaces and denoised with a shared diffusion objective.
+Both observations and actions are encoded into compact latent spaces and denoised with a shared flow matching objective.
 By conditioning the diffusion prior on the observation-action latent history, proprioceptive state, and language goal, the variational bound incentivizes the encoder to discard unpredictable content while retaining the physical geometry that the history of interactions can predict.
 In Stage~1, a pretrained video VAE and a pretrained diffusion transformer (serving as the dynamics prior) are jointly fine-tuned with LoRA under the AC-UL objective alongside newly trained action encoder/decoder components; in Stage~2, the frozen fine-tuned encoders provide a physics-grounded vocabulary on which the autoregressive diffusion transformer is further fine-tuned for joint video-action generation, enabling closed-loop planning via iterative rollouts.
 We evaluate AC-UL on the DROID real-world manipulation dataset and show that a 1.3B AC-UL model can match or outperform the 14B DreamZero baseline, demonstrating that adapting the latent space for action-relevant content is more effective than scaling model parameters on generic representations.
@@ -81,14 +81,14 @@ While these features transfer surprisingly well, they are agnostic to the causal
 We propose a third path: \textbf{fine-tuning a pretrained video model's latent space to encode only the information that the history of interactions can predict}.
 Our approach applies the Unified Latents (UL) framework~\citep{heek2025ul} to \emph{adapt} a pretrained video VAE and diffusion transformer for joint observation-action dynamics.
 The key insight is that by adding a learned action encoder and conditioning the diffusion prior on the latent history, proprioceptive state, and a language instruction, any encoder information that cannot be predicted from this context will spike the variational loss.
-Both the action latent $\vb_t$ and the observation latent $\vz_{t+1}$ are denoised with the same diffusion objective, ensuring a unified generative process.
+Both the action latent $\vb_t$ and the observation latent $\vz_{t+1}$ are denoised with the same flow matching objective, ensuring a unified generative process.
 The encoder is thus incentivized to adapt its latent space---starting from powerful pretrained features---to discard unpredictable content and retain only the physical geometry that the robot's interaction history and task goal can explain.
 
 This formulation follows the autoregressive structure of DreamZero~\citep{dreamzero2025}, but applies the UL variational objective to fine-tune the latent space for action-relevant content, rather than using a frozen generic VAE.
 
 Our contributions are:
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
-  \item We derive the \textbf{Action-Conditioned Unified Latent (AC-UL)} objective, extending the UL variational bound to history-conditioned \emph{joint} observation-action dynamics with learned action encoding and a unified diffusion objective for both modalities (\Cref{sec:method}).
+  \item We derive the \textbf{Action-Conditioned Unified Latent (AC-UL)} objective, extending the UL variational bound to history-conditioned \emph{joint} observation-action dynamics with learned action encoding and a unified flow matching objective for both modalities (\Cref{sec:method}).
   \item We provide a complete \textbf{two-stage training algorithm}: Stage~1 fine-tunes a pretrained video VAE and a pretrained diffusion transformer (as dynamics prior) with LoRA under the AC-UL objective alongside learned action encoder/decoder components; Stage~2 further fine-tunes the same pretrained diffusion transformer on frozen AC-UL latents for autoregressive joint video-action generation (\Cref{sec:stage2}).
   \item We demonstrate on the \textbf{DROID} real-world manipulation dataset that a \textbf{1.3B AC-UL model matches or outperforms a 14B DreamZero baseline} across closed-loop planning, imitation learning, and video-action prediction, showing that better latent representations outweigh raw model scale (\Cref{sec:experiments}).
 \end{enumerate}
@@ -195,7 +195,7 @@ We adopt this autoregressive structure but apply the UL variational objective to
 %=====================================================================
 
 We apply the UL framework to \emph{fine-tune} a pretrained video model for \emph{history-conditioned joint action-observation dynamics}.
-The central idea is to (1)~initialize the observation encoder $E_\theta$ and decoder $D_\theta$ from a pretrained video VAE (e.g., Wan2.1~\citep{wan2025}), (2)~add a learned action encoder $A_\theta$ and action decoder $D_\theta^a$, and (3)~replace the unconditional prior $p_\theta(\vz_0)$ with a \emph{dynamics prior} $p_\theta(\vb_t, \vz_{t+1,0} \mid \mathcal{H}_t^z)$ that must jointly denoise the current action latent and the resulting future observation latent using a unified diffusion objective, conditioned on the interaction history, proprioceptive state, and a language instruction.
+The central idea is to (1)~initialize the observation encoder $E_\theta$ and decoder $D_\theta$ from a pretrained video VAE (e.g., Wan2.1~\citep{wan2025}), (2)~add a learned action encoder $A_\theta$ and action decoder $D_\theta^a$, and (3)~replace the unconditional prior $p_\theta(\vz_0)$ with a \emph{dynamics prior} $p_\theta(\vb_t, \vz_{t+1,0} \mid \mathcal{H}_t^z)$ that must jointly denoise the current action latent and the resulting future observation latent using a unified flow matching objective, conditioned on the interaction history, proprioceptive state, and a language instruction.
 By fine-tuning the pretrained VAE with the AC-UL loss, we leverage powerful visual features learned from large-scale video data while adapting the latent space to be action-grounded.
 
 \subsection{Problem Setup and Variables}
@@ -240,7 +240,7 @@ The action encoder $A_\theta$ maps each raw action into a deterministic action l
   \vb_k = A_\theta(\va_k) \in \R^{d_b}, \quad k = t-H, \ldots, t-1, t,
   \label{eq:action_encode}
 \end{equation}
-where $d_b$ is the action latent dimension. This encoding allows the action to be treated symmetrically with observation latents in the diffusion process.
+where $d_b$ is the action latent dimension. This encoding allows the action to be treated symmetrically with observation latents in the flow matching process.
 
 The latent history is constructed from encoded observations, encoded actions, and proprioceptive state:
 \begin{equation}
@@ -335,20 +335,34 @@ where $\gamma$ controls the relative weight of action denoising and both losses 
 
 The loss is driven by two velocity prediction MSE terms, which are equivalent to weighted clean-sample prediction errors (\Cref{eq:fm_reweight}): (i) the observation latent error $\|v_\theta^z - (\vz_{t+1,\text{clean}} - \vep_z)\|^2 = \frac{1}{\tau^2}\|\vz_{t+1,\text{clean}} - \hat{\vz}_{t+1}\|^2$ and (ii) the action latent error $\|v_\theta^b - (\vb_t - \vep_b)\|^2 = \frac{1}{\tau^2}\|\vb_t - \hat{\vb}_t\|^2$.
 
-Consider what happens if the observation encoder $E_\theta$ encodes information into $\vz_{t+1,\text{clean}}$ that is \emph{unpredictable} from the history $\mathcal{H}_t^z$:
+We categorize visual content by whether the dynamics prior can predict it from the latent history $\mathcal{H}_t^z$.
 
+\textbf{Unpredictable content} (penalized by $\loss_z^{\text{latent}}$). If the encoder preserves information that the prior cannot predict from the history, the observation latent MSE spikes. Concrete examples in real-world manipulation (e.g., DROID):
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Random textures/lighting:} If $E_\theta$ preserves random background variations, the dynamics prior cannot denoise these from the history (past latent frames, past latent actions, and the language goal do not determine future lighting). The observation latent MSE spikes.
+  \item \textbf{Camera auto-exposure adjustments:} Mid-trajectory brightness shifts caused by the camera's automatic gain control have no causal link to the robot's actions or the language instruction. Nothing in $\mathcal{H}_t^z$ predicts them.
 
-  \item \textbf{Novel objects entering the scene:} Sudden appearance of objects not visible in the history is unpredictable. The encoder learns to down-weight such transients.
+  \item \textbf{Specular reflections:} Highlights on metallic surfaces shift as viewpoint or lighting changes. While partially correlated with gripper motion, these high-frequency appearance changes are difficult for the prior to model and are effectively unpredictable.
 
-  \item \textbf{Action-caused geometry:} Gripper position, object displacement, and contact geometry \emph{are} predictable from the history via learned physics. The prior can reason: ``given the language goal `pick up red block', the history of gripper approach, and the denoised action latent $\hat{\vb}_t$ (close gripper), the next frame should show the gripper grasping the block.'' Encoding this geometry \emph{decreases} both MSE terms.
+  \item \textbf{External disturbances:} Another person's hand entering the workspace, or an object being moved by someone else, is not explained by the robot's action history.
 \end{enumerate}
 
-The \emph{joint} denoising of $(\vb_t, \vz_{t+1})$ creates two complementary pressures:
+\textbf{Predictable content} (``free'' under the prior loss). Information that the prior \emph{can} predict from $\mathcal{H}_t^z$ incurs no prior penalty, so the encoder is free to retain it:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Action-caused geometry:} The gripper closing on the red block after a ``pick up red block'' instruction is predictable: the prior can reason from the language goal, the history of gripper approach, and the denoised action latent $\hat{\vb}_t$ that the next frame should show contact. Encoding gripper pose, object displacement, and contact geometry \emph{decreases} both MSE terms.
+
+  \item \textbf{Object state changes:} A drawer sliding open after a pull action, or a block falling after being released, follows from the action history via learned physics.
+
+  \item \textbf{Relative gripper-to-target distance:} The decreasing distance between the gripper and the target object is explained by the trajectory of past actions and the language goal.
+\end{enumerate}
+
+\textbf{Predictable but action-irrelevant content} (a subtlety). Not all predictable information is action-relevant. Static background texture (e.g., wood grain on the table) or a clock ticking on the wall are perfectly predictable from history---the prior loss does not penalize them. However, finite latent capacity creates an indirect pressure: channels spent encoding action-irrelevant background are channels unavailable for gripper geometry. The action latent loss $\loss_b$ amplifies this pressure, because the latent transition $\vz_t \to \vz_{t+1}$ must be informative enough to denoise the action $\vb_t$, actively rewarding action-relevant structure over inert background content.
+
+\medskip
+
+The \emph{joint} denoising of $(\vb_t, \vz_{t+1})$ creates two complementary pressures that together favor action-relevant content:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \textbf{Forward dynamics:} The prior must denoise $\vz_{t+1}$ --- what will happen after executing the action. This requires the observation latent to encode physical geometry that actions causally affect.
-  \item \textbf{Inverse dynamics:} The prior must also denoise $\vb_t$ --- what action caused the transition $\vz_t \to \vz_{t+1}$. This prevents the observation encoder from collapsing to a trivially predictable but uninformative representation. Simultaneously, the action encoder $A_\theta$ must encode actions in a form that the prior can consistently denoise from the latent history.
+  \item \textbf{Forward dynamics:} The prior must denoise $\vz_{t+1}$---what will happen after executing the action. This requires the observation latent to encode physical geometry that actions causally affect (e.g., gripper-object contact, not table texture).
+  \item \textbf{Inverse dynamics:} The prior must also denoise $\vb_t$---what action caused the transition $\vz_t \to \vz_{t+1}$. This prevents the observation encoder from collapsing to a trivially predictable but uninformative representation (e.g., encoding only static background). The action encoder $A_\theta$ must simultaneously encode actions in a form that the prior can consistently denoise from the latent history.
 \end{itemize}
 
 \textbf{Formal argument.}
@@ -357,7 +371,9 @@ The total information in the latent can be decomposed as:
   I(\vz_{t+1,\text{clean}}; \vo_{t+1}) = \underbrace{I(\vz_{t+1,\text{clean}}; \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{unpredictable info (penalized by } \loss_z^{\text{latent}}\text{)}} + \underbrace{I(\vz_{t+1,\text{clean}}; \mathcal{H}_t^z)}_{\text{history-predictable info (free)}}.
   \label{eq:info_decomp}
 \end{equation}
-The flow matching prior loss $\loss_z^{\text{latent}}$ is a reweighted approximation of the KL-optimal bound on the first term (see \Cref{sec:theory} for proof that the information bottleneck property is preserved). The decoder loss $\loss_x$ incentivizes maximizing total information. The action latent loss $\loss_b$ ensures the latent captures the causal effect of actions (inverse dynamics signal) via the same flow matching objective. Together, they push both encoders toward representations that are maximally informative about action-predictable physics while discarding everything else.
+The flow matching prior loss $\loss_z^{\text{latent}}$ is a reweighted approximation of the KL-optimal bound on the first term (see \Cref{sec:theory} for proof that the information bottleneck property is preserved). The decoder loss $\loss_x$ incentivizes maximizing total information. The action latent loss $\loss_b$ ensures the latent captures the causal effect of actions (inverse dynamics signal) via the same flow matching objective, and creates capacity pressure that favors action-relevant content among the history-predictable remainder.
+
+Together, three pressures shape the latent space: (1)~the prior loss \emph{discards} unpredictable content, (2)~the decoder loss \emph{retains} content useful for reconstruction, and (3)~the action loss \emph{prioritizes} action-relevant structure by requiring the latent transition to support action denoising.
 
 \subsection{Deterministic Decoder for Future Frame Reconstruction}
 \label{sec:decoder}
@@ -475,12 +491,12 @@ The input sequence follows DreamZero's blockwise structure: language tokens, fol
   \big[\text{text\_enc}(\bm{l}),\; \text{patchify}(\vz_{t-H+1}),\; \text{mlp}(\vb_{t-H}),\; \text{mlp}(\bm{s}),\; \ldots,\; \text{patchify}(\vz_{t}),\; \text{mlp}(\vb_{t,\tau}),\; \text{patchify}(\vz_{t+1,\tau})\big].
   \label{eq:prior_input}
 \end{equation}
-The language instruction $\bm{l}$ is encoded by a frozen text encoder (UMT5-XXL). Each observation latent $\vz_{k,\text{clean}}$ is patchified into spatial tokens; each action latent $\vb_k$ and state token are projected through MLPs. The noised targets $\vb_{t,\tau}$ and $\vz_{t+1,\tau}$ are appended. The diffusion timestep $\tau$ is encoded via sinusoidal embeddings and added to the noisy target tokens.
+The language instruction $\bm{l}$ is encoded by a frozen text encoder (UMT5-XXL). Each observation latent $\vz_{k,\text{clean}}$ is patchified into spatial tokens; each action latent $\vb_k$ and state token are projected through MLPs. The noised targets $\vb_{t,\tau}$ and $\vz_{t+1,\tau}$ are appended. The flow matching timestep $\tau$ is encoded via sinusoidal embeddings and added to the noisy target tokens.
 
-The model uses \emph{blockwise causal attention} (following DreamZero): within each block, action tokens can attend to the current and all previous observation tokens, the current state token, and themselves. The model has two output heads:
+The model uses \emph{blockwise causal attention} (following DreamZero): within each block, action tokens can attend to the current and all previous observation tokens, the current state token, and themselves. The model has two output heads that predict velocity fields:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item \textbf{Observation latent head:} Linear projection from the output tokens at the $\vz_{t+1,\tau}$ positions $\to \hat{\vz}_{t+1,\text{clean}} \in \R^{h \times w \times c}$.
-  \item \textbf{Action latent head:} Linear projection from the output tokens at the $\vb_{t,\tau}$ position $\to \hat{\vb}_t \in \R^{d_b}$.
+  \item \textbf{Observation latent head:} Linear projection from the output tokens at the $\vz_{t+1,\tau}$ positions $\to v_\theta^z \in \R^{h \times w \times c}$. The clean prediction is recovered as $\hat{\vz}_{t+1,\text{clean}} = \vz_{t+1,\tau} + \tau\, v_\theta^z$.
+  \item \textbf{Action latent head:} Linear projection from the output tokens at the $\vb_{t,\tau}$ position $\to v_\theta^b \in \R^{d_b}$. The clean prediction is recovered as $\hat{\vb}_t = \vb_{t,\tau} + \tau\, v_\theta^b$.
 \end{itemize}
 
 %=====================================================================
@@ -968,22 +984,22 @@ $H$ & \textbf{Planning SR} & \textbf{Action MSE} & \textbf{Latent MSE} \\
 \end{tabular}
 \end{table}
 
-\subsubsection{Effect of Loss Factor and Noise Level}
+\subsubsection{Effect of Loss Factor and Timestep Distribution}
 
 \begin{table}[t]
 \centering
-\caption{Ablation: loss factor $c_{\text{lf}}$ and minimum noise level $\lambda_z(0)$ on DROID.}
+\caption{Ablation: loss factor $c_{\text{lf}}$ and shifted Beta distribution shift parameter on DROID.}
 \label{tab:ablation_lf_noise}
 \begin{tabular}{lcccc}
 \toprule
-$c_{\text{lf}}$ & $\lambda_z(0)$ & \textbf{Planning SR} & \textbf{PSNR} & \textbf{Bitrate} \\
+$c_{\text{lf}}$ & Shift & \textbf{Planning SR} & \textbf{PSNR} & \textbf{Bitrate} \\
 \midrule
-1.3 & 5   & -- & -- & -- \\
-1.5 & 5   & -- & -- & -- \\
-1.7 & 5   & -- & -- & -- \\
-1.5 & 3   & -- & -- & -- \\
-1.5 & 7   & -- & -- & -- \\
-1.5 & 10  & -- & -- & -- \\
+1.3 & 5.0   & -- & -- & -- \\
+1.5 & 5.0   & -- & -- & -- \\
+1.7 & 5.0   & -- & -- & -- \\
+1.5 & 1.0   & -- & -- & -- \\
+1.5 & 3.0   & -- & -- & -- \\
+1.5 & 10.0  & -- & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
