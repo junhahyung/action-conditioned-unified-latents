@@ -122,11 +122,11 @@ where $w(\lambda_t) = 1$ yields a tight bound, and $w(\lambda_t) = \sigmoid(\lam
 \subsection{Unified Latents (UL)}
 \label{sec:ul_background}
 
-UL~\citep{heek2025ul} uses a deterministic encoder $\vz_{\text{clean}} = E_\theta(\vx)$ with fixed Gaussian noise added up to a minimum noise level defined by $\lambda_z(0) = 5$:
+UL~\citep{heek2025ul} uses a deterministic encoder $\vz_{\text{clean}} = E_\theta(\vx)$ with fixed Gaussian noise added at the minimum noise level:
 \begin{equation}
   \vz_0 = \alpha_z(0)\,\vz_{\text{clean}} + \sigma_z(0)\,\vep_z, \quad
-  \alpha_z(0) = \sqrt{\sigmoid(+5)} \approx 1.0, \quad
-  \sigma_z(0) = \sqrt{\sigmoid(-5)} \approx 0.08.
+  \alpha_z(0) \approx 1.0, \quad
+  \sigma_z(0) \approx 0.08.
   \label{eq:ul_noise}
 \end{equation}
 
@@ -134,20 +134,42 @@ UL~\citep{heek2025ul} uses a deterministic encoder $\vz_{\text{clean}} = E_\thet
 The KL penalty between the encoder distribution and the diffusion prior is:
 \begin{equation}
   \KL\!\Big[p(\vz_0|\vx) \,\Big\|\, p_\theta(\vz_0)\Big]
-  \leq \E_{t}\!\left[-\frac{d\lambda_z(t)}{dt}\,\frac{\exp\lambda_z(t)}{2}\,w(\lambda_z(t))\,\|\vz_{\text{clean}} - \hat{\vz}(\vz_t, \theta)\|^2\right]
+  \leq \E_{\tau}\!\left[-\frac{d\lambda_z(\tau)}{d\tau}\,\frac{\exp\lambda_z(\tau)}{2}\,w(\lambda_z(\tau))\,\|\vz_{\text{clean}} - \hat{\vz}(\vz_\tau, \theta)\|^2\right]
   + \KL\!\Big[p(\vz_1|\vx) \,\Big\|\, \mathcal{N}(\bm{0},\bm{I})\Big],
   \label{eq:ul_prior}
 \end{equation}
-where $w(\lambda_z(t)) = 1$ for a tight bitrate bound.
+where $w(\lambda_z(\tau)) = 1$ for a tight bitrate bound. This bound holds for any noise schedule $\vz_\tau = \alpha(\tau)\vz_{\text{clean}} + \sigma(\tau)\vep$, and we will refer to the loss-weighting function $w_{\KL}(\tau) \triangleq -\frac{d\lambda(\tau)}{d\tau}\frac{\exp\lambda(\tau)}{2}$ as the \emph{KL-optimal weighting}.
 
 \textbf{Decoder loss (Equation~4 of UL).}
 The reconstruction term uses a diffusion decoder conditioned on $\vz_0$:
 \begin{equation}
-  -\log p_\theta(\vx|\vz_0) \leq \E_{t\sim\mathcal{U}(0,1)}\!\left[\frac{d\lambda_x(t)}{dt}\,\frac{\exp\lambda_x(t)}{2}\,w_x(\lambda_x(t))\,\|\vx - \hat{\vx}(\vx_t, \vz_0, \theta)\|^2\right],
+  -\log p_\theta(\vx|\vz_0) \leq \E_{\tau\sim\mathcal{U}(0,1)}\!\left[\frac{d\lambda_x(\tau)}{d\tau}\,\frac{\exp\lambda_x(\tau)}{2}\,w_x(\lambda_x(\tau))\,\|\vx - \hat{\vx}(\vx_\tau, \vz_0, \theta)\|^2\right],
   \label{eq:ul_decoder}
 \end{equation}
-with sigmoid weighting $w_x(\lambda_x(t)) = \sigmoid(\lambda_x(t) - b)$ and a loss factor $c_{\text{lf}} \in [1.3, 1.7]$ that up-weighs the decoder to prevent posterior collapse.
+with sigmoid weighting $w_x(\lambda_x(\tau)) = \sigmoid(\lambda_x(\tau) - b)$ and a loss factor $c_{\text{lf}} \in [1.3, 1.7]$ that up-weighs the decoder to prevent posterior collapse.
 In our method, we depart from UL by using a pretrained deterministic decoder instead of a diffusion decoder (see \Cref{sec:decoder}).
+
+\subsection{Flow Matching}
+\label{sec:flow_matching_background}
+
+Flow matching~\citep{lipman2023flow,liu2023flow} provides an alternative to DDPM for training continuous generative models. Instead of learning a score function under a variance-preserving noise schedule, flow matching learns a \emph{velocity field} $v_\theta$ that transports samples along a linear interpolation path:
+\begin{equation}
+  \vx_\tau = (1-\tau)\,\vx + \tau\,\vep, \quad \vep \sim \mathcal{N}(\bm{0}, \bm{I}), \quad \tau \in [0,1],
+  \label{eq:fm_interpolation}
+\end{equation}
+where $\tau=0$ corresponds to clean data and $\tau=1$ to pure noise. The conditional velocity field target is $\vx - \vep$ (the direction from noise to data), and the training objective is:
+\begin{equation}
+  \loss_{\text{FM}} = \E_{\tau, \vep}\!\left[\left\|v_\theta(\vx_\tau, \tau) - (\vx - \vep)\right\|^2\right].
+  \label{eq:fm_loss}
+\end{equation}
+
+\textbf{Relationship to DDPM.}
+Both DDPM and flow matching can be expressed as weighted denoising objectives. The velocity prediction loss is equivalent to a \emph{clean-sample prediction} loss with $\tau$-dependent weighting (see \Cref{sec:fm_approx} for the full derivation):
+\begin{equation}
+  \left\|v_\theta - (\vx - \vep)\right\|^2 = \frac{1}{\tau^2}\left\|\vx - \hat{\vx}_\theta\right\|^2, \quad \text{where } \hat{\vx}_\theta \triangleq \vx_\tau + \tau\, v_\theta.
+  \label{eq:fm_ddpm_equiv}
+\end{equation}
+This means the flow matching loss is a reweighted version of the DDPM denoising loss, with implicit weighting $w_{\text{FM}}(\tau) = 1/\tau^2$ instead of the KL-optimal weighting $w_{\KL}(\tau)$.
 
 \subsection{Autoregressive Video-Action Models}
 \label{sec:dreamzero_background}
@@ -226,96 +248,92 @@ The latent history is constructed from encoded observations, encoded actions, an
   \label{eq:latent_history}
 \end{equation}
 
-\textbf{Forward process.}
-Following UL, we add fixed Gaussian noise to the future clean latent and to the current action latent. For any diffusion time $\tau \in [0,1]$:
+\textbf{Forward process (flow matching interpolation).}
+Since the pretrained Wan2.1 model uses flow matching, we adopt the same linear interpolation schedule for the forward process. For any time $\tau \in [0,1]$:
 \begin{align}
-  \vz_{t+1,\tau} &= \alpha_z(\tau)\,\vz_{t+1,\text{clean}} + \sigma_z(\tau)\,\vep_z, \quad \vep_z \sim \mathcal{N}(\bm{0}, \bm{I}),
+  \vz_{t+1,\tau} &= (1-\tau)\,\vz_{t+1,\text{clean}} + \tau\,\vep_z, \quad \vep_z \sim \mathcal{N}(\bm{0}, \bm{I}),
   \label{eq:forward_latent} \\
-  \vb_{t,\tau} &= \alpha_b(\tau)\,\vb_t + \sigma_b(\tau)\,\vep_b, \quad \vep_b \sim \mathcal{N}(\bm{0}, \bm{I}),
+  \vb_{t,\tau} &= (1-\tau)\,\vb_t + \tau\,\vep_b, \quad \vep_b \sim \mathcal{N}(\bm{0}, \bm{I}),
   \label{eq:forward_action}
 \end{align}
-where the log-SNR schedules $\lambda_z(\tau) = \log(\alpha_z^2(\tau)/\sigma_z^2(\tau))$ and $\lambda_b(\tau) = \log(\alpha_b^2(\tau)/\sigma_b^2(\tau))$ both satisfy the variance-preserving constraint.
-The same diffusion time $\tau$ is shared between the observation and action latents, enabling joint denoising.
-
-At $\tau = 0$ (minimum noise level), $\lambda_z(0) = 5$ gives:
-\begin{equation}
-  \alpha_z(0) = \sqrt{\sigmoid(5)} \approx 0.9967, \quad
-  \sigma_z(0) = \sqrt{\sigmoid(-5)} \approx 0.0813.
-  \label{eq:min_noise}
-\end{equation}
+where $\tau = 0$ corresponds to the clean signal and $\tau = 1$ to pure noise.
+The same time $\tau$ is shared between the observation and action latents, enabling joint denoising.
 
 \subsection{History-Conditioned Joint Dynamics Prior}
 \label{sec:ac_prior}
 
 This is the central contribution. In standard UL, the prior $\hat{\vz}(\vz_t, \theta)$ unconditionally denoises the latent.
-We replace this with a \emph{joint dynamics prior} that conditions on the full interaction history $\mathcal{H}_t^z$ (including language instruction) and simultaneously denoises the current action latent and the resulting future observation latent:
+We replace this with a \emph{joint dynamics prior} that conditions on the full interaction history $\mathcal{H}_t^z$ (including language instruction) and simultaneously predicts the velocity field for the current action latent and the resulting future observation latent:
 \begin{equation}
-  \big(\hat{\vb}_t,\; \hat{\vz}_{t+1,\text{clean}}\big) = \hat{f}_\theta^{\text{dyn}}\!\left(\vb_{t,\tau},\; \vz_{t+1,\tau},\; \mathcal{H}_t^z\right).
+  \big(v_\theta^b,\; v_\theta^z\big) = \hat{f}_\theta^{\text{dyn}}\!\left(\vb_{t,\tau},\; \vz_{t+1,\tau},\; \mathcal{H}_t^z,\; \tau\right).
   \label{eq:dynamics_prior_pred}
 \end{equation}
 
-The prior jointly denoises:
+The prior jointly predicts velocities for:
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
-  \item \textbf{Current action latent:} $\hat{\vb}_t \approx \vb_t$ --- the encoded action to take now, given the history and language goal.
-  \item \textbf{Future observation latent:} $\hat{\vz}_{t+1,\text{clean}} \approx \vz_{t+1,\text{clean}}$ --- the observation that results from executing the action.
+  \item \textbf{Current action latent:} $v_\theta^b \approx \vb_t - \vep_b$ --- the velocity from noise to the encoded action, given the history and language goal.
+  \item \textbf{Future observation latent:} $v_\theta^z \approx \vz_{t+1,\text{clean}} - \vep_z$ --- the velocity from noise to the observation that results from executing the action.
 \end{enumerate}
-Both are generated from noised inputs using the same diffusion process. The action latent and future observation latent are causally linked: the decoded action $D_\theta^a(\hat{\vb}_t)$ is the action that \emph{causes} the transition $\vo_t \to \vo_{t+1}$. The model must denoise both consistently.
+Both are generated from noised inputs using the same flow matching process. The clean-sample predictions are recovered as $\hat{\vb}_t = \vb_{t,\tau} + \tau\, v_\theta^b$ and $\hat{\vz}_{t+1} = \vz_{t+1,\tau} + \tau\, v_\theta^z$. The action latent and future observation latent are causally linked: the decoded action $D_\theta^a(\hat{\vb}_t)$ is the action that \emph{causes} the transition $\vo_t \to \vo_{t+1}$. The model must predict both velocities consistently.
 
-\subsubsection{Derivation of the History-Conditioned Joint KL Bound}
+\subsubsection{Derivation: From DDPM KL Bound to Flow Matching Prior}
+\label{sec:fm_derivation}
 
-We derive the AC-UL prior loss by applying the diffusion KL bound (\Cref{eq:diff_kl}) to the conditional distributions.
-Since both observations and actions are encoded into latent spaces by deterministic encoders, the KL between the encoder distributions and the dynamics prior is over the \emph{joint} latent space:
+We first recall the original UL derivation, then show how the flow matching prior loss approximates it.
+
+\textbf{Step 1: The DDPM KL bound (original UL).}
+The ideal prior loss in the UL framework upper-bounds the KL divergence between the encoder and prior distributions. For the joint latent $(\vz_{t+1,0}, \vb_{t,0})$, the joint KL decomposes additively (by independence of the deterministic encoders):
 \begin{align}
-  &\KL\!\Big[p(\vz_{t+1,0}, \vb_{t,0} \mid \vo_{t+1}, \va_t, \mathcal{H}_t) \;\Big\|\; p_\theta(\vz_{t+1,0}, \vb_{t,0} \mid \mathcal{H}_t^z)\Big].
-  \label{eq:joint_kl}
+  &\KL\!\Big[p(\vz_{t+1,0}, \vb_{t,0} \mid \vo_{t+1}, \va_t) \;\Big\|\; p_\theta(\vz_{t+1,0}, \vb_{t,0} \mid \mathcal{H}_t^z)\Big] \nonumber \\
+  &\leq \underbrace{\E_\tau\!\left[w_{\KL}(\tau)\,\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta\|^2\right]}_{\loss_z^{\text{KL}}} + \gamma \cdot \underbrace{\E_\tau\!\left[w_{\KL}(\tau)\,\|\vb_t - \hat{\vb}_\theta\|^2\right]}_{\loss_b^{\text{KL}}} + C_{\KL},
+  \label{eq:ddpm_kl_bound}
 \end{align}
+where $w_{\KL}(\tau) = -\frac{d\lambda(\tau)}{d\tau}\frac{\exp\lambda(\tau)}{2}$ is the KL-optimal weighting (\Cref{eq:ul_prior}), and $C_{\KL}$ collects the boundary KL terms. This is a tight bound when $w = w_{\KL}$.
 
-Since both encoders are deterministic, the encoder distribution factorizes as:
+\textbf{Step 2: Flow matching as a reweighted denoising loss.}
+The pretrained Wan2.1 model uses flow matching with linear interpolation $\vz_\tau = (1-\tau)\vz_{\text{clean}} + \tau\vep$. As shown in \Cref{sec:fm_approx}, the velocity prediction loss is equivalent to a clean-sample prediction loss with implicit weighting $1/\tau^2$:
 \begin{equation}
-  p(\vz_{t+1,0}, \vb_{t,0} \mid \vo_{t+1}, \va_t, \mathcal{H}_t) = p(\vz_{t+1,0} \mid \vo_{t+1}) \cdot p(\vb_{t,0} \mid \va_t),
-  \label{eq:encoder_factorize}
+  \|v_\theta - (\vz_{\text{clean}} - \vep)\|^2 = \frac{1}{\tau^2}\,\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2,
+  \quad\text{where } \hat{\vz}_\theta = \vz_\tau + \tau\, v_\theta.
+  \label{eq:fm_reweight}
 \end{equation}
-where each factor is a narrow Gaussian centered at the deterministic encoder output (with minimum noise $\sigma(0) \approx 0.08$).
 
-By independence of the two encoder distributions, the joint KL decomposes additively:
-\begin{align}
-  &\KL\!\Big[p(\vz_{t+1,0}, \vb_{t,0} \mid \vo_{t+1}, \va_t, \mathcal{H}_t) \;\Big\|\; p_\theta(\vz_{t+1,0}, \vb_{t,0} \mid \mathcal{H}_t^z)\Big] \nonumber \\
-  &\geq \KL\!\Big[p(\vz_{t+1,0} \mid \vo_{t+1}) \;\Big\|\; p_\theta(\vz_{t+1,0} \mid \mathcal{H}_t^z)\Big] + \KL\!\Big[p(\vb_{t,0} \mid \va_t) \;\Big\|\; p_\theta(\vb_{t,0} \mid \mathcal{H}_t^z)\Big].
-  \label{eq:joint_kl_decompose}
-\end{align}
+Therefore, both the DDPM and flow matching prior losses have the general form $\E_\tau[w(\tau)\,\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2]$, differing only in the weighting function:
+\begin{equation}
+  w_{\KL}(\tau) = -\tfrac{d\lambda}{d\tau}\tfrac{e^\lambda}{2} \quad\text{(tight KL bound)}, \qquad
+  w_{\text{FM}}(\tau) = \tfrac{1}{\tau^2} \quad\text{(flow matching)}.
+  \label{eq:weight_comparison}
+\end{equation}
 
-Each KL term is bounded via the diffusion decomposition.
+\textbf{Step 3: The flow matching prior loss.}
+We adopt the flow matching velocity prediction loss as our practical prior objective:
 
 \textbf{Observation latent loss:}
-\begin{align}
-  \loss_z^{\text{latent}}(\theta) &= \E_{\tau \sim \mathcal{U}(0,1)}\!\left[
-    -\frac{d\lambda_z(\tau)}{d\tau}\,\frac{\exp\lambda_z(\tau)}{2}\,
-    \left\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta^{\text{dyn}}\!\left(\vb_{t,\tau},\, \vz_{t+1,\tau},\, \mathcal{H}_t^z\right)\right\|^2
-  \right] \nonumber \\
-  &\quad + \KL\!\Big[p(\vz_{t+1,1} \mid \vo_{t+1}) \;\Big\|\; \mathcal{N}(\bm{0},\bm{I})\Big].
+\begin{equation}
+  \loss_z^{\text{latent}}(\theta) = \E_{\tau \sim p(\tau)}\!\left[
+    \left\|v_\theta^z\!\left(\vb_{t,\tau},\, \vz_{t+1,\tau},\, \mathcal{H}_t^z,\, \tau\right) - (\vz_{t+1,\text{clean}} - \vep_z)\right\|^2
+  \right].
   \label{eq:ac_prior_loss}
-\end{align}
+\end{equation}
 
 \textbf{Action latent loss:}
-\begin{align}
-  \loss_b(\theta) &= \E_{\tau \sim \mathcal{U}(0,1)}\!\left[
-    -\frac{d\lambda_b(\tau)}{d\tau}\,\frac{\exp\lambda_b(\tau)}{2}\,
-    \left\|\vb_t - \hat{\vb}_\theta^{\text{dyn}}\!\left(\vb_{t,\tau},\, \vz_{t+1,\tau},\, \mathcal{H}_t^z\right)\right\|^2
-  \right] \nonumber \\
-  &\quad + \KL\!\Big[p(\vb_{t,1} \mid \va_t) \;\Big\|\; \mathcal{N}(\bm{0},\bm{I})\Big].
+\begin{equation}
+  \loss_b(\theta) = \E_{\tau \sim p(\tau)}\!\left[
+    \left\|v_\theta^b\!\left(\vb_{t,\tau},\, \vz_{t+1,\tau},\, \mathcal{H}_t^z,\, \tau\right) - (\vb_t - \vep_b)\right\|^2
+  \right].
   \label{eq:action_latent_loss}
-\end{align}
+\end{equation}
 
-The complete prior loss combines both with a shared diffusion objective:
+Here $p(\tau)$ is a shifted Beta distribution (following DreamZero) that concentrates sampling on intermediate noise levels. The complete prior loss combines both:
 \begin{equation}
   \loss_z^{\text{joint}}(\theta) = \loss_z^{\text{latent}}(\theta) + \gamma \cdot \loss_b(\theta),
   \label{eq:joint_prior_loss}
 \end{equation}
-where $\gamma$ controls the relative weight of action denoising and both losses share the same sampled diffusion time $\tau$.
+where $\gamma$ controls the relative weight of action denoising and both losses share the same sampled time $\tau$.
 
 \subsubsection{Why History-Conditioned Joint Denoising Forces Physics-Grounded Encoding}
 
-The loss is driven by two diffusion MSE terms: (i) the observation latent denoising error $\|\vz_{t+1,\text{clean}} - \hat{\vz}_{t+1}\|^2$ and (ii) the action latent denoising error $\|\vb_t - \hat{\vb}_t\|^2$.
+The loss is driven by two velocity prediction MSE terms, which are equivalent to weighted clean-sample prediction errors (\Cref{eq:fm_reweight}): (i) the observation latent error $\|v_\theta^z - (\vz_{t+1,\text{clean}} - \vep_z)\|^2 = \frac{1}{\tau^2}\|\vz_{t+1,\text{clean}} - \hat{\vz}_{t+1}\|^2$ and (ii) the action latent error $\|v_\theta^b - (\vb_t - \vep_b)\|^2 = \frac{1}{\tau^2}\|\vb_t - \hat{\vb}_t\|^2$.
 
 Consider what happens if the observation encoder $E_\theta$ encodes information into $\vz_{t+1,\text{clean}}$ that is \emph{unpredictable} from the history $\mathcal{H}_t^z$:
 
@@ -339,7 +357,7 @@ The total information in the latent can be decomposed as:
   I(\vz_{t+1,\text{clean}}; \vo_{t+1}) = \underbrace{I(\vz_{t+1,\text{clean}}; \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{unpredictable info (penalized by } \loss_z^{\text{latent}}\text{)}} + \underbrace{I(\vz_{t+1,\text{clean}}; \mathcal{H}_t^z)}_{\text{history-predictable info (free)}}.
   \label{eq:info_decomp}
 \end{equation}
-The prior loss $\loss_z^{\text{latent}}$ upper-bounds the first term (see \Cref{sec:theory} for proof). The decoder loss $\loss_x$ incentivizes maximizing total information. The action latent loss $\loss_b$ ensures the latent captures the causal effect of actions (inverse dynamics signal) via the same diffusion objective. Together, they push both encoders toward representations that are maximally informative about action-predictable physics while discarding everything else.
+The flow matching prior loss $\loss_z^{\text{latent}}$ is a reweighted approximation of the KL-optimal bound on the first term (see \Cref{sec:theory} for proof that the information bottleneck property is preserved). The decoder loss $\loss_x$ incentivizes maximizing total information. The action latent loss $\loss_b$ ensures the latent captures the causal effect of actions (inverse dynamics signal) via the same flow matching objective. Together, they push both encoders toward representations that are maximally informative about action-predictable physics while discarding everything else.
 
 \subsection{Deterministic Decoder for Future Frame Reconstruction}
 \label{sec:decoder}
@@ -385,14 +403,14 @@ This loss is applied to the clean (non-noised) action latent $\vb_t$ and ensures
 
 The total per-transition loss combines the joint prior loss, the decoder loss, and the action reconstruction loss:
 \begin{equation}
-  \loss_{\text{S1}}(\theta) = \underbrace{\loss_z^{\text{latent}}(\theta) + \gamma \cdot \loss_b(\theta)}_{\text{joint dynamics prior (diffusion)}} + c_{\text{lf}} \cdot \underbrace{\loss_x(\theta)}_{\text{decoder}} + \underbrace{\loss_a^{\text{recon}}(\theta)}_{\text{action reconstruction}}.
+  \loss_{\text{S1}}(\theta) = \underbrace{\loss_z^{\text{latent}}(\theta) + \gamma \cdot \loss_b(\theta)}_{\text{joint dynamics prior (flow matching)}} + c_{\text{lf}} \cdot \underbrace{\loss_x(\theta)}_{\text{decoder}} + \underbrace{\loss_a^{\text{recon}}(\theta)}_{\text{action reconstruction}}.
   \label{eq:total_loss}
 \end{equation}
 
 \textbf{Interpretation of each term:}
 \begin{itemize}[leftmargin=*,itemsep=2pt]
-  \item $\loss_z^{\text{latent}}$: Diffusion denoising loss for the observation latent. Penalizes unpredictable information in the future latent given the history. Forces the observation encoder to discard action-irrelevant content.
-  \item $\loss_b$: Diffusion denoising loss for the action latent. Uses the same diffusion objective as $\loss_z^{\text{latent}}$. Requires the latent history to contain enough dynamics structure that the action can be denoised. Prevents trivial latent collapse.
+  \item $\loss_z^{\text{latent}}$: Flow matching velocity prediction loss for the observation latent. A reweighted approximation of the DDPM KL bound that penalizes unpredictable information in the future latent given the history. Forces the observation encoder to discard action-irrelevant content.
+  \item $\loss_b$: Flow matching velocity prediction loss for the action latent. Uses the same objective as $\loss_z^{\text{latent}}$. Requires the latent history to contain enough dynamics structure that the action can be denoised. Prevents trivial latent collapse.
   \item $\loss_x$: Observation reconstruction loss (MSE + perceptual). Rewards information that aids reconstruction via the pretrained deterministic Wan decoder. Ensures the latent retains fine geometric detail (e.g., gripper-object distance).
   \item $\loss_a^{\text{recon}}$: Action reconstruction loss. Ensures the action encoder-decoder pair faithfully represents actions.
 \end{itemize}
@@ -412,13 +430,13 @@ The complete Stage~1 training procedure is given in \Cref{alg:stage1}.
 \STATE Encode observations: $\vz_{k,\text{clean}} = E_\theta(\vo_k)$ for $k = t{-}H{+}1, \ldots, t{+}1$
 \STATE Encode actions: $\vb_k = A_\theta(\va_k)$ for $k = t{-}H, \ldots, t$
 \STATE Construct latent history: $\mathcal{H}_t^z = (\bm{l}, \vz_{t-H+1,\text{clean}}, \vb_{t-H}, \ldots, \vb_{t-1}, \vz_{t,\text{clean}})$
-\STATE \textbf{// Joint dynamics prior loss (shared diffusion objective)}
-\STATE Sample $\tau \sim \mathcal{U}(0,1)$, $\vep_z \sim \mathcal{N}(\bm{0}, \bm{I})$, $\vep_b \sim \mathcal{N}(\bm{0}, \bm{I})$
-\STATE $\vz_{t+1,\tau} = \alpha_z(\tau)\,\vz_{t+1,\text{clean}} + \sigma_z(\tau)\,\vep_z$
-\STATE $\vb_{t,\tau} = \alpha_b(\tau)\,\vb_t + \sigma_b(\tau)\,\vep_b$
-\STATE $(\hat{\vz}_{t+1}, \hat{\vb}_t) = \hat{f}_\theta^{\text{dyn}}(\vb_{t,\tau}, \vz_{t+1,\tau}, \mathcal{H}_t^z)$
-\STATE $\loss_z^{\text{latent}} = -\frac{d\lambda_z(\tau)}{d\tau}\,\frac{\exp\lambda_z(\tau)}{2}\,\|\vz_{t+1,\text{clean}} - \hat{\vz}_{t+1}\|^2 + \KL[p(\vz_{t+1,1}|\vo_{t+1})\|\mathcal{N}(\bm{0},\bm{I})]$
-\STATE $\loss_b = -\frac{d\lambda_b(\tau)}{d\tau}\,\frac{\exp\lambda_b(\tau)}{2}\,\|\vb_t - \hat{\vb}_t\|^2 + \KL[p(\vb_{t,1}|\va_t)\|\mathcal{N}(\bm{0},\bm{I})]$
+\STATE \textbf{// Joint dynamics prior loss (flow matching)}
+\STATE Sample $\tau \sim p(\tau)$, $\vep_z \sim \mathcal{N}(\bm{0}, \bm{I})$, $\vep_b \sim \mathcal{N}(\bm{0}, \bm{I})$
+\STATE $\vz_{t+1,\tau} = (1-\tau)\,\vz_{t+1,\text{clean}} + \tau\,\vep_z$ \hfill \COMMENT{flow matching interpolation}
+\STATE $\vb_{t,\tau} = (1-\tau)\,\vb_t + \tau\,\vep_b$
+\STATE $(v_\theta^b, v_\theta^z) = \hat{f}_\theta^{\text{dyn}}(\vb_{t,\tau}, \vz_{t+1,\tau}, \mathcal{H}_t^z, \tau)$ \hfill \COMMENT{velocity prediction}
+\STATE $\loss_z^{\text{latent}} = \|v_\theta^z - (\vz_{t+1,\text{clean}} - \vep_z)\|^2$
+\STATE $\loss_b = \|v_\theta^b - (\vb_t - \vep_b)\|^2$
 \STATE \textbf{// Action reconstruction loss}
 \STATE $\loss_a^{\text{recon}} = \|\va_t - D_\theta^a(\vb_t)\|^2$
 \STATE \textbf{// Reconstruction loss (deterministic decoder)}
@@ -560,47 +578,89 @@ Because the latents encode only action-relevant geometry, the planning cost func
 \label{sec:theory}
 %=====================================================================
 
-\subsection{AC-UL as a Variational Bound on Joint Transition Likelihood}
+\subsection{Flow Matching as an Approximation of the UL KL Bound}
+\label{sec:fm_approx}
 
-\begin{proposition}[AC-UL Joint Bound]
-The AC-UL Stage~1 loss provides an upper bound on the negative log-likelihood of the joint action-observation transition:
+We now show formally that the flow matching prior loss used in AC-UL is a reweighted form of the original DDPM KL bound from UL, preserving the information bottleneck property.
+
+\begin{proposition}[Velocity-to-Clean Equivalence]
+\label{prop:fm_equiv}
+For the flow matching interpolation $\vz_\tau = (1-\tau)\vz_{\text{clean}} + \tau\vep$ with velocity target $v_{\text{target}} = \vz_{\text{clean}} - \vep$, the velocity prediction MSE equals a $\tau$-reweighted clean-sample prediction MSE:
 \begin{equation}
-  -\log p_\theta(\va_t, \vo_{t+1} \mid \mathcal{H}_t) \leq \loss_z^{\text{latent}}(\theta) + \gamma \cdot \loss_b(\theta) + c_{\text{lf}} \cdot \loss_x(\theta) + \loss_a^{\text{recon}}(\theta),
-  \label{eq:acul_bound}
+  \|v_\theta(\vz_\tau, \tau) - (\vz_{\text{clean}} - \vep)\|^2 = \frac{1}{\tau^2}\,\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2,
+  \label{eq:fm_clean_equiv}
 \end{equation}
-where $\mathcal{H}_t = (\bm{l}, \vo_{t-H+1:t}, \va_{t-H:t-1})$ includes the language instruction.
+where the implied clean-sample prediction is $\hat{\vz}_\theta \triangleq \vz_\tau + \tau\, v_\theta(\vz_\tau, \tau)$.
 \end{proposition}
 
 \begin{proof}
-Starting from the ELBO applied to the conditional model with joint latent $(\vz_{t+1,0}, \vb_{t,0})$:
+From $\vz_\tau = (1-\tau)\vz_{\text{clean}} + \tau\vep$, we have $\vz_{\text{clean}} = (\vz_\tau - \tau\vep)/(1-\tau)$. The velocity target is $v_{\text{target}} = (\vz_{\text{clean}} - \vz_\tau)/\tau + \vz_{\text{clean}} - \vz_{\text{clean}} = (\vz_{\text{clean}} - \vz_\tau)/\tau$.
+More directly: $v_{\text{target}} = \vz_{\text{clean}} - \vep$, and $\hat{\vz}_\theta = \vz_\tau + \tau v_\theta$. Then:
+\begin{align}
+  \vz_{\text{clean}} - \hat{\vz}_\theta &= \vz_{\text{clean}} - \vz_\tau - \tau v_\theta = \vz_{\text{clean}} - (1-\tau)\vz_{\text{clean}} - \tau\vep - \tau v_\theta \nonumber \\
+  &= \tau(\vz_{\text{clean}} - \vep) - \tau v_\theta = \tau(v_{\text{target}} - v_\theta).
+\end{align}
+Therefore $\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2 = \tau^2\|v_{\text{target}} - v_\theta\|^2$.
+\end{proof}
+
+\begin{proposition}[Flow Matching Approximates the KL Bound]
+\label{prop:fm_kl}
+The flow matching prior loss and the tight DDPM KL bound share the same denoising MSE kernel $\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2$, differing only in the weighting over $\tau$:
+\begin{align}
+  \loss_z^{\text{KL}} &= \E_\tau\!\left[w_{\KL}(\tau)\,\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2\right], \quad w_{\KL}(\tau) = \frac{1-\tau}{\tau^3}, \label{eq:ddpm_weight} \\
+  \loss_z^{\text{FM}} &= \E_\tau\!\left[w_{\text{FM}}(\tau)\,\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2\right], \quad w_{\text{FM}}(\tau) = \frac{1}{\tau^2}. \label{eq:fm_weight}
+\end{align}
+The ratio $w_{\text{FM}}(\tau)/w_{\KL}(\tau) = \tau/(1-\tau)$ is bounded, so the flow matching loss is a consistent proxy for the KL bound.
+\end{proposition}
+
+\begin{proof}
+For the flow matching interpolation $\alpha(\tau) = 1-\tau$, $\sigma(\tau) = \tau$, the log-SNR is $\lambda(\tau) = 2\log\!\big(\frac{1-\tau}{\tau}\big)$. Computing:
+$\frac{d\lambda}{d\tau} = \frac{-2}{\tau(1-\tau)}, \quad \exp\lambda(\tau) = \frac{(1-\tau)^2}{\tau^2}.$
+The KL-optimal weight is $w_{\KL}(\tau) = -\frac{d\lambda}{d\tau}\frac{e^\lambda}{2} = \frac{(1-\tau)}{\tau^3}$.
+From \Cref{prop:fm_equiv}, the FM loss uses $w_{\text{FM}}(\tau) = 1/\tau^2$.
+\end{proof}
+
+\textbf{Key implication.}
+Since both losses are monotonically increasing in the clean-sample prediction error $\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2$ at every noise level $\tau$, they share the same \emph{information bottleneck property}: if the encoder $E_\theta$ encodes content into $\vz_{\text{clean}}$ that is unpredictable from the history $\mathcal{H}_t^z$, then $\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2$ increases (the prior cannot predict the unpredictable content), which increases the loss \emph{regardless of the weighting function}.
+The flow matching loss differs from the KL bound only in how it distributes gradient signal across noise levels---it up-weights high-noise (large $\tau$) relative to the KL bound, which emphasizes low-noise prediction.
+
+\subsection{AC-UL as an Approximate Variational Bound}
+
+\begin{proposition}[AC-UL Approximate Bound]
+The AC-UL Stage~1 loss provides an approximate upper bound on the negative log-likelihood of the joint action-observation transition:
+\begin{equation}
+  -\log p_\theta(\va_t, \vo_{t+1} \mid \mathcal{H}_t) \;\lessapprox\; \loss_z^{\text{latent}}(\theta) + \gamma \cdot \loss_b(\theta) + c_{\text{lf}} \cdot \loss_x(\theta) + \loss_a^{\text{recon}}(\theta),
+  \label{eq:acul_bound}
+\end{equation}
+where $\lessapprox$ denotes that the bound is approximate due to two controlled relaxations: (1)~the flow matching prior loss uses $w_{\text{FM}}$ instead of $w_{\KL}$, and (2)~the deterministic decoder loss $\loss_x$ replaces the diffusion decoder bound.
+\end{proposition}
+
+The ELBO decomposition remains exact:
 \begin{align}
   -\log p_\theta(\va_t, \vo_{t+1} \mid \mathcal{H}_t)
-  &\leq \E_{\vz_{t+1,0}, \vb_{t,0}}\!\Big[-\log p_\theta(\vo_{t+1} \mid \vz_{t+1,0})\Big] \nonumber \\
-  &\quad + \KL\!\Big[p(\vz_{t+1,0} \mid \vo_{t+1}) \;\Big\|\; p_\theta(\vz_{t+1,0} \mid \mathcal{H}_t^z)\Big] \nonumber \\
-  &\quad + \KL\!\Big[p(\vb_{t,0} \mid \va_t) \;\Big\|\; p_\theta(\vb_{t,0} \mid \mathcal{H}_t^z)\Big] \nonumber \\
-  &\quad - \E_{\vb_{t,0}}\!\Big[\log p_\theta(\va_t \mid \vb_{t,0})\Big].
+  &\leq \underbrace{-\E\!\Big[\log p_\theta(\vo_{t+1} \mid \vz_{t+1,0})\Big]}_{\text{decoder term}} + \underbrace{\KL\!\Big[q(\vz_{t+1,0}) \;\Big\|\; p_\theta(\vz_{t+1,0} \mid \mathcal{H}_t^z)\Big]}_{\text{obs.\ prior KL}} \nonumber \\
+  &\quad + \underbrace{\KL\!\Big[q(\vb_{t,0}) \;\Big\|\; p_\theta(\vb_{t,0} \mid \mathcal{H}_t^z)\Big]}_{\text{action prior KL}} + \underbrace{-\E\!\Big[\log p_\theta(\va_t \mid \vb_{t,0})\Big]}_{\text{action decoder}}.
   \label{eq:proof_step}
 \end{align}
-Applying the diffusion bounds (\Cref{eq:ac_prior_loss,eq:action_latent_loss}) to the KL terms, bounding $-\log p_\theta(\va_t \mid \vb_{t,0}) \leq \|\va_t - D_\theta^a(\vb_t)\|^2$ (Gaussian action likelihood) for the fourth term, and using the reconstruction loss $\loss_x$ (\Cref{eq:recon_loss}) as a proxy for the decoder term $-\log p_\theta(\vo_{t+1} \mid \vz_{t+1,0})$, yields the result.
-\textbf{Note:} Because we use a deterministic decoder rather than a diffusion decoder, the bound on the decoder term is approximate rather than tight. The loss factor $c_{\text{lf}}$ controls the reconstruction-compression trade-off and prevents posterior collapse.
-\end{proof}
+Each KL term is bounded by the corresponding flow matching loss (a reweighted version of the tight DDPM bound, \Cref{prop:fm_kl}). The decoder and action decoder terms are bounded by $\loss_x$ and $\loss_a^{\text{recon}}$ respectively.
 
 \subsection{Information-Theoretic Interpretation}
 
 \textbf{Rate (prior loss).}
-The prior loss $\loss_z^{\text{latent}}$ upper-bounds the mutual information between the encoder output and the data, \emph{beyond what is predictable from the history}:
+The prior loss $\loss_z^{\text{latent}}$ provides a reweighted bound on the mutual information between the encoder output and the data, \emph{beyond what is predictable from the history}:
 \begin{equation}
-  \loss_z^{\text{latent}} \geq I(\vz_{t+1,\text{clean}}; \vo_{t+1} \mid \mathcal{H}_t^z).
+  \loss_z^{\text{latent}} \propto I(\vz_{t+1,\text{clean}}; \vo_{t+1} \mid \mathcal{H}_t^z),
   \label{eq:rate_bound}
 \end{equation}
+where the proportionality reflects the reweighting from $w_{\KL}$ to $w_{\text{FM}}$. The \emph{direction} of the incentive is preserved: the loss increases monotonically with unpredictable information, regardless of the weighting.
 
 \textbf{Action regularization.}
-The action latent loss $\loss_b$ provides an additional inductive bias via the same diffusion objective. The prior must denoise the action latent from the latent history. This means the latent space must encode the \emph{causal effect} of the action on the scene:
+The action latent loss $\loss_b$ provides an additional inductive bias via the same flow matching objective. The prior must predict the action velocity from the latent history, so the latent space must encode the \emph{causal effect} of the action on the scene:
 \begin{equation}
-  \loss_b \geq I(\vb_t; \va_t \mid \mathcal{H}_t^z),
+  \loss_b \propto I(\vb_t; \va_t \mid \mathcal{H}_t^z),
   \label{eq:action_info}
 \end{equation}
-so minimizing $\loss_b$ pushes the action encoder to encode only the action information that is predictable from the history, while ensuring the latent transition $\vz_t \to \vz_{t+1}$ remains informative about the action.
+ensuring the latent transition $\vz_t \to \vz_{t+1}$ remains informative about the action.
 
 \textbf{Equilibrium.}
 At convergence, both encoders achieve an optimal trade-off: they maximize history-predictable, action-relevant information while minimizing unpredictable content:
@@ -968,7 +1028,7 @@ Because AC-UL latents are compact and action-focused, we expect open-loop rollou
 AC-UL and DreamZero share the same Wan-based architecture and the autoregressive joint video-action generation paradigm. The key differences are (1)~how the VAE latent space is obtained and (2)~model scale:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item \textbf{DreamZero (14B)} uses a 14B CausalWanModel with the Wan2.1 VAE \emph{as-is}. The VAE was pretrained for generic video reconstruction, so its latent space retains textures, lighting, and background details irrelevant to action dynamics.
-  \item \textbf{AC-UL (1.3B)} uses a $10\times$ smaller 1.3B CausalWanModel but \emph{fine-tunes} the VAE with the UL variational objective, adding a dynamics prior that penalizes action-irrelevant information. The action encoder/decoder adds an explicit action latent channel with the same diffusion objective.
+  \item \textbf{AC-UL (1.3B)} uses a $10\times$ smaller 1.3B CausalWanModel but \emph{fine-tunes} the VAE with the UL variational objective (implemented via flow matching), adding a dynamics prior that penalizes action-irrelevant information. The action encoder/decoder adds an explicit action latent channel with the same flow matching objective.
 \end{itemize}
 Our three-way comparison (14B frozen VAE, 1.3B frozen VAE, 1.3B AC-UL) isolates both effects: the 1.3B-vs-1.3B comparison shows the latent space improvement at equal scale, while the 1.3B AC-UL vs.\ 14B DreamZero comparison tests whether adapting the latent space can compensate for $10\times$ fewer parameters.
 
@@ -987,7 +1047,7 @@ FLARE adds future latent prediction as an auxiliary loss using frozen SigLIP-2 f
   \item \textbf{Two-stage training:} Stage~1 requires fine-tuning the VAE and training action encoder/decoder/prior simultaneously, adding training cost over DreamZero's single-stage LoRA fine-tuning.
   \item \textbf{VAE fine-tuning risk:} Aggressive fine-tuning of the pretrained VAE could degrade general visual features. LoRA mitigates this but limits the degree of latent space adaptation.
   \item \textbf{Fixed encoders at Stage~2:} If Stage~1 fine-tuning is suboptimal, Stage~2 inherits these limitations.
-  \item \textbf{Approximate bound:} Using a deterministic Wan decoder instead of a diffusion decoder makes the ELBO decoder term approximate rather than tight. In practice, the reconstruction loss with perceptual terms provides an effective proxy.
+  \item \textbf{Approximate bound:} Two relaxations make the ELBO approximate: (1)~the flow matching prior uses reweighted denoising ($w_{\text{FM}}$ instead of $w_{\KL}$), and (2)~the deterministic Wan decoder replaces the diffusion decoder bound. The information bottleneck property is preserved (\Cref{sec:fm_approx}), but the bound is no longer tight.
 \end{itemize}
 
 %=====================================================================
@@ -1179,6 +1239,16 @@ E.~Hu, Y.~Shen, P.~Wallis, et~al.
 \newblock LoRA: Low-rank adaptation of large language models.
 \newblock In \emph{ICLR}, 2022.
 
+\bibitem[Lipman et~al.(2023)]{lipman2023flow}
+Y.~Lipman, R.~T.~Q.~Chen, H.~Ben-Hamu, M.~Nickel.
+\newblock Flow matching for generative modeling.
+\newblock In \emph{ICLR}, 2023.
+
+\bibitem[Liu et~al.(2023)]{liu2023flow}
+X.~Liu, C.~Gong, and Q.~Liu.
+\newblock Flow straight and fast: Learning to generate and transfer data with rectified flow.
+\newblock In \emph{ICLR}, 2023.
+
 \bibitem[Wan Team(2025)]{wan2025}
 Wan Team.
 \newblock Wan2.1: Open and advanced large-scale video generative models.
@@ -1192,67 +1262,54 @@ Wan Team.
 \label{app:derivations}
 %=====================================================================
 
-\subsection{Full Derivation of the History-Conditioned Joint Prior Bound}
+\subsection{Full Derivation: From ELBO to Flow Matching Prior}
 \label{app:prior_derivation}
 
+We present the complete derivation chain: ELBO $\to$ DDPM KL bound $\to$ flow matching approximation.
+
 \textbf{Step 1: ELBO for joint conditional generation.}
-We model the joint distribution $p_\theta(\va_t, \vo_{t+1} \mid \mathcal{H}_t)$, where $\mathcal{H}_t = (\bm{l}, \vo_{t-H+1:t}, \va_{t-H:t-1})$ includes the language instruction. Introducing joint latent variables $(\vz_{t+1,0}, \vb_{t,0})$---the observation latent and action latent respectively:
+We model the joint distribution $p_\theta(\va_t, \vo_{t+1} \mid \mathcal{H}_t)$, where $\mathcal{H}_t = (\bm{l}, \vo_{t-H+1:t}, \va_{t-H:t-1})$ includes the language instruction. Introducing joint latent variables $(\vz_{t+1,0}, \vb_{t,0})$:
 \begin{align}
   -\log p_\theta(\vo_{t+1}, \va_t \mid \mathcal{H}_t)
-  &\leq -\E_{q(\vz_{t+1,0} | \vo_{t+1})\, q(\vb_{t,0} | \va_t)}\!\left[\log p_\theta(\vo_{t+1} | \vz_{t+1,0}) + \log p_\theta(\va_t | \vb_{t,0})\right] \nonumber \\
+  &\leq -\E_{q}\!\left[\log p_\theta(\vo_{t+1} | \vz_{t+1,0}) + \log p_\theta(\va_t | \vb_{t,0})\right] \nonumber \\
   &\quad + \KL\!\left[q(\vz_{t+1,0} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0} | \mathcal{H}_t^z)\right] \nonumber \\
-  &\quad + \KL\!\left[q(\vb_{t,0} | \va_t) \,\|\, p_\theta(\vb_{t,0} | \mathcal{H}_t^z)\right],
+  &\quad + \KL\!\left[q(\vb_{t,0} | \va_t) \,\|\, p_\theta(\vb_{t,0} | \mathcal{H}_t^z)\right].
   \label{eq:app_joint_elbo}
 \end{align}
-where $q(\vz_{t+1,0} | \vo_{t+1}) = \mathcal{N}(\alpha_z(0)\, E_\theta(\vo_{t+1}),\, \sigma_z^2(0)\, \bm{I})$ and $q(\vb_{t,0} | \va_t) = \mathcal{N}(\alpha_b(0)\, A_\theta(\va_t),\, \sigma_b^2(0)\, \bm{I})$.
 
-\textbf{Step 2: Bounding the observation latent KL with diffusion.}
-The prior $p_\theta(\vz_{t+1,0} | \mathcal{H}_t^z)$ is a history-conditioned diffusion model. Augmenting with the full path:
+\textbf{Step 2: DDPM KL bound (tight, original UL).}
+Following \citet{kingma2021variational}, each KL term is bounded via the diffusion path decomposition. For the observation latent:
 \begin{align}
-  &\KL\!\left[q(\vz_{t+1,0} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0} | \mathcal{H}_t^z)\right] \nonumber \\
-  &\leq \KL\!\left[q(\vz_{t+1,0:1} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0:1} | \mathcal{H}_t^z)\right].
-  \label{eq:app_chain}
+  \KL\!\left[q(\vz_{t+1,0} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0} | \mathcal{H}_t^z)\right]
+  &\leq \E_\tau\!\left[w_{\KL}(\tau)\, \|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta\|^2\right] + C_z,
+  \label{eq:app_ddpm_bound}
 \end{align}
+where $w_{\KL}(\tau) = -\frac{d\lambda(\tau)}{d\tau}\frac{e^{\lambda(\tau)}}{2}$ and $C_z = \KL[q(\vz_{t+1,1} | \vo_{t+1}) \| \mathcal{N}(\bm{0}, \bm{I})]$. An analogous bound holds for the action latent KL.
 
-\textbf{Step 3: Decomposing the observation path KL.}
-Following \citet{kingma2021variational}:
+\textbf{Step 3: Flow matching reweighting.}
+For the flow matching interpolation $\vz_\tau = (1-\tau)\vz_{\text{clean}} + \tau\vep$, the KL-optimal weight is $w_{\KL}(\tau) = (1-\tau)/\tau^3$. The flow matching velocity prediction loss (\Cref{prop:fm_equiv}) implicitly uses weight $w_{\text{FM}}(\tau) = 1/\tau^2$. We replace the tight DDPM bound with the flow matching loss:
 \begin{align}
-  &\KL\!\left[q(\vz_{t+1,0:1} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0:1} | \mathcal{H}_t^z)\right] \nonumber \\
-  &= \int_0^1 \E_{q(\vz_{t+1,\tau} | \vo_{t+1})}\!\left[-\frac{d\lambda_z(\tau)}{d\tau}\, \frac{\exp\lambda_z(\tau)}{2}\, \|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta^{\text{dyn}}(\vb_{t,\tau}, \vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2\right] d\tau \nonumber \\
-  &\quad + \KL\!\left[q(\vz_{t+1,1} | \vo_{t+1}) \,\|\, \mathcal{N}(\bm{0}, \bm{I})\right].
-  \label{eq:app_decompose}
+  \loss_z^{\text{latent}} &= \E_\tau\!\left[\|v_\theta^z - (\vz_{t+1,\text{clean}} - \vep_z)\|^2\right] = \E_\tau\!\left[\frac{1}{\tau^2}\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta\|^2\right].
+  \label{eq:app_fm_loss}
 \end{align}
+This is a reweighted version of the DDPM bound: not tight, but preserving the information bottleneck property (the loss increases monotonically with unpredictable content at every $\tau$).
 
-\textbf{Step 4: Bounding the action latent KL with diffusion.}
-The action latent follows the same diffusion process:
+\textbf{Step 4: Action reconstruction and decoder terms.}
+The action reconstruction uses a Gaussian likelihood bound: $-\log p_\theta(\va_t | \vb_{t,0}) \leq \|\va_t - D_\theta^a(\vb_t)\|^2$.
+The decoder term uses the deterministic reconstruction loss $\loss_x$ as an approximate proxy.
+
+\textbf{Step 5: Complete approximate bound.}
 \begin{align}
-  &\KL\!\left[q(\vb_{t,0} | \va_t) \,\|\, p_\theta(\vb_{t,0} | \mathcal{H}_t^z)\right] \nonumber \\
-  &\leq \int_0^1 \E_{q(\vb_{t,\tau} | \va_t)}\!\left[-\frac{d\lambda_b(\tau)}{d\tau}\, \frac{\exp\lambda_b(\tau)}{2}\, \|\vb_t - \hat{\vb}_\theta^{\text{dyn}}(\vb_{t,\tau}, \vz_{t+1,\tau}, \mathcal{H}_t^z)\|^2\right] d\tau \nonumber \\
-  &\quad + \KL\!\left[q(\vb_{t,1} | \va_t) \,\|\, \mathcal{N}(\bm{0}, \bm{I})\right].
-  \label{eq:app_action_diffusion}
-\end{align}
-
-The conditioning on $\mathcal{H}_t^z$ is the key difference from standard UL: the prior uses the full interaction history---language instruction, past observation latents, and past action latents---to jointly denoise both the action and observation latents. The denoised action latent $\hat{\vb}_t$ represents the action that \emph{causes} the transition to $\vo_{t+1}$, so the model must denoise both consistently.
-
-\textbf{Step 5: Action reconstruction term.}
-The raw action is recovered from the action latent via the action decoder:
-\begin{align}
-  -\log p_\theta(\va_t | \vb_{t,0}) &\propto \|\va_t - D_\theta^a(\vb_t)\|^2 = \loss_a^{\text{recon}}.
-  \label{eq:app_action_recon}
-\end{align}
-
-\textbf{Step 6: Combining all terms.}
-The complete bound is:
-\begin{align}
-  -\log p_\theta(\vo_{t+1}, \va_t | \mathcal{H}_t) &\leq \underbrace{\loss_z^{\text{latent}}(\theta)}_{\text{obs.\ latent KL bound}} + \gamma \cdot \underbrace{\loss_b(\theta)}_{\text{action latent KL bound}} + c_{\text{lf}} \cdot \underbrace{\loss_x(\theta)}_{\text{decoder bound}} + \underbrace{\loss_a^{\text{recon}}(\theta)}_{\text{action reconstruction}}.
+  -\log p_\theta(\vo_{t+1}, \va_t | \mathcal{H}_t) &\;\lessapprox\; \underbrace{\loss_z^{\text{latent}}(\theta)}_{\text{obs.\ prior (FM)}} + \gamma \cdot \underbrace{\loss_b(\theta)}_{\text{action prior (FM)}} + c_{\text{lf}} \cdot \underbrace{\loss_x(\theta)}_{\text{decoder (approx.)}} + \underbrace{\loss_a^{\text{recon}}(\theta)}_{\text{action recon.}}
   \label{eq:app_total}
 \end{align}
+The approximation stems from two controlled relaxations: (1)~$w_{\text{FM}}$ instead of $w_{\KL}$ for the prior terms, and (2)~deterministic decoder instead of diffusion decoder. Both preserve the information bottleneck mechanism.
 
 \subsection{Information-Theoretic Analysis}
 \label{app:info_theory}
 
 \textbf{Claim.}
-The AC-UL prior loss upper-bounds $I(\vz_{t+1,\text{clean}}; \vo_{t+1} \mid \mathcal{H}_t^z)$.
+The AC-UL flow matching prior loss provides a reweighted bound on $I(\vz_{t+1,\text{clean}}; \vo_{t+1} \mid \mathcal{H}_t^z)$.
 
 \textbf{Proof.}
 The KL in the ELBO satisfies:
@@ -1260,10 +1317,10 @@ The KL in the ELBO satisfies:
   \E_{p(\mathcal{H}_t)}\!\left[\KL\!\left[q(\vz_{t+1,0} | \vo_{t+1}) \,\|\, p_\theta(\vz_{t+1,0} | \mathcal{H}_t^z)\right]\right]
   &\geq I(\vz_{t+1,0}; \vo_{t+1} | \mathcal{H}_t^z).
 \end{align}
-When the prior is optimal ($p_\theta = p^*$), equality holds. Since $\loss_z^{\text{latent}}$ upper-bounds the KL, we have $\loss_z^{\text{latent}} \geq I(\vz_{t+1,\text{clean}}; \vo_{t+1} | \mathcal{H}_t^z)$.
+When the prior is optimal ($p_\theta = p^*$), equality holds. The DDPM KL bound with $w_{\KL}$ upper-bounds the KL; the flow matching loss with $w_{\text{FM}}$ is a reweighted version. Since both weightings are strictly positive for all $\tau \in (0,1)$, $\loss_z^{\text{latent}}$ increases monotonically with $I(\vz_{t+1,\text{clean}}; \vo_{t+1} | \mathcal{H}_t^z)$, preserving the information bottleneck.
 
-\textbf{Role of action latent diffusion loss.}
-The action latent loss $\loss_b$ provides an additional constraint via the same diffusion framework. The KL bound gives:
+\textbf{Role of action latent loss.}
+The action latent loss $\loss_b$ provides an additional constraint via the same flow matching framework. The reweighted KL bound gives:
 \begin{equation}
   \loss_b \geq I(\vb_t; \va_t \mid \mathcal{H}_t^z).
 \end{equation}
@@ -1271,7 +1328,7 @@ At optimality, the joint denoising of $(\vb_t, \vz_{t+1})$ ensures that the acti
 \begin{equation}
   I(\vb_t; \vz_{t+1,\text{clean}} | \mathcal{H}_t^z) \geq I(\va_t; \vo_{t+1} | \mathcal{H}_t^z) - I(\va_t; \vo_{t+1} | \vz_{t+1,\text{clean}}, \mathcal{H}_t^z).
 \end{equation}
-The joint diffusion loss pushes $\vz_{t+1,\text{clean}}$ to be a \emph{sufficient statistic} for the action given the history, meaning $I(\va_t; \vo_{t+1} | \vz_{t+1,\text{clean}}, \mathcal{H}_t^z) \to 0$. This ensures the observation latent captures the full causal effect of the action, while the action encoder learns a representation that is jointly denoised with the observation latent.
+The joint flow matching loss pushes $\vz_{t+1,\text{clean}}$ to be a \emph{sufficient statistic} for the action given the history, meaning $I(\va_t; \vo_{t+1} | \vz_{t+1,\text{clean}}, \mathcal{H}_t^z) \to 0$. This ensures the observation latent captures the full causal effect of the action, while the action encoder learns a representation that is jointly denoised with the observation latent.
 
 %=====================================================================
 \section{Implementation Details}
@@ -1296,8 +1353,8 @@ VAE fine-tuning & LoRA (rank 4, alpha 4) \\
 Prior initialization & Pretrained Wan DiT (1.3B) \\
 Prior fine-tuning & LoRA (rank 4) \\
 History length $H$ & 4 \\
-$\lambda_z(0)$ (min noise log-SNR) & 5 \\
-Decoder sigmoid bias $b$ & 3.0 \\
+Noise schedule & Flow matching (linear interpolation) \\
+Timestep sampling $p(\tau)$ & Shifted Beta (shift $= 5.0$) \\
 Loss factor $c_{\text{lf}}$ & 1.5 \\
 Action latent loss weight $\gamma$ & 1.0 \\
 Action encoder $A_\theta$ & Embodiment-specific MLP \\
