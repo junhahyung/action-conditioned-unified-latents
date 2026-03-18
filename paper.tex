@@ -260,16 +260,16 @@ where $\tau = 0$ corresponds to the clean signal and $\tau = 1$ to pure noise.
 The same time $\tau$ is shared between the observation and action latents, enabling joint denoising.
 
 \textbf{Stochastic encoder for ELBO validity.}
-A deterministic encoder yields a Dirac delta distribution, making the KL divergence (and hence bitrate) infinite.
-Following UL~\citep{heek2025ul}, a valid ELBO requires a stochastic encoder distribution.
-In the flow matching framework, the encoder distribution at any noise level $\tau > 0$ is:
+The ELBO requires a stochastic encoder distribution; a deterministic encoder yields a Dirac delta, making the KL divergence (and hence bitrate) infinite~\citep{heek2025ul}.
+In the original UL framework (DDPM), this is handled by adding fixed Gaussian noise at a minimum noise level $\sigma(0) > 0$.
+In flow matching, no such explicit noise injection is needed---the standard FM interpolation itself provides stochasticity at any $\tau > 0$:
 \begin{equation}
   q(\vz_\tau \mid \vo) = \mathcal{N}\!\big((1-\tau)\,\vz_{\text{clean}},\; \tau^2 \bm{I}\big),
   \label{eq:encoder_distribution}
 \end{equation}
 which is a proper Gaussian with variance $\tau^2$.
-We ensure $\tau > 0$ in practice by sampling from a shifted Beta distribution $p(\tau)$ that has zero density at $\tau = 0$.
-This provides the minimum stochasticity needed for the mutual information and KL terms in the information decomposition (\Cref{eq:info_decomp}) to be well-defined and finite, while keeping the flow matching interpolation and velocity targets in their standard form.
+Following standard FM practice (e.g., Wan2.1 uses shifted Beta, SD3 uses logit-normal), we sample $\tau$ from a distribution $p(\tau)$ that has zero density at $\tau = 0$, ensuring $\tau > 0$ throughout training.
+This means no modification to the FM procedure is required: the sampling distribution that is already standard in FM implementations provides the minimum stochasticity for the mutual information and KL terms in the information decomposition (\Cref{eq:info_decomp}) to be well-defined.
 The same argument applies to the action latent via $q(\vb_\tau \mid \va) = \mathcal{N}\!\big((1{-}\tau)\,\vb_{\text{clean}},\; \tau^2 \bm{I}\big)$.
 
 \subsection{History-Conditioned Joint Dynamics Prior}
