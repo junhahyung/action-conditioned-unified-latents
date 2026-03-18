@@ -237,14 +237,14 @@ By initializing from a pretrained VAE, the encoder starts with strong visual fea
 \textbf{Action encoder.}
 The action encoder $A_\theta$ maps each raw action into a deterministic action latent:
 \begin{equation}
-  \vb_k = A_\theta(\va_k) \in \R^{d_b}, \quad k = t-H, \ldots, t-1, t,
+  \vb_{k,\text{clean}} = A_\theta(\va_k) \in \R^{d_b}, \quad k = t-H, \ldots, t-1, t,
   \label{eq:action_encode}
 \end{equation}
 where $d_b$ is the action latent dimension. This encoding allows the action to be treated symmetrically with observation latents in the flow matching process.
 
 The latent history is constructed from encoded observations, encoded actions, and proprioceptive state:
 \begin{equation}
-  \mathcal{H}_t^z = \big(\bm{l},\; \bm{s}_t,\; \vz_{t-H+1,\text{clean}}, \vb_{t-H}, \vz_{t-H+2,\text{clean}}, \vb_{t-H+1}, \ldots, \vb_{t-1}, \vz_{t,\text{clean}}\big).
+  \mathcal{H}_t^z = \big(\bm{l},\; \bm{s}_t,\; \vz_{t-H+1,\text{clean}}, \vb_{t-H,\text{clean}}, \vz_{t-H+2,\text{clean}}, \vb_{t-H+1,\text{clean}}, \ldots, \vb_{t-1,\text{clean}}, \vz_{t,\text{clean}}\big).
   \label{eq:latent_history}
 \end{equation}
 
@@ -253,11 +253,24 @@ Since the pretrained Wan2.1 model uses flow matching, we adopt the same linear i
 \begin{align}
   \vz_{t+1,\tau} &= (1-\tau)\,\vz_{t+1,\text{clean}} + \tau\,\vep_z, \quad \vep_z \sim \mathcal{N}(\bm{0}, \bm{I}),
   \label{eq:forward_latent} \\
-  \vb_{t,\tau} &= (1-\tau)\,\vb_t + \tau\,\vep_b, \quad \vep_b \sim \mathcal{N}(\bm{0}, \bm{I}),
+  \vb_{t,\tau} &= (1-\tau)\,\vb_{t,\text{clean}} + \tau\,\vep_b, \quad \vep_b \sim \mathcal{N}(\bm{0}, \bm{I}),
   \label{eq:forward_action}
 \end{align}
 where $\tau = 0$ corresponds to the clean signal and $\tau = 1$ to pure noise.
 The same time $\tau$ is shared between the observation and action latents, enabling joint denoising.
+
+\textbf{Stochastic encoder for ELBO validity.}
+A deterministic encoder yields a Dirac delta distribution, making the KL divergence (and hence bitrate) infinite.
+Following UL~\citep{heek2025ul}, a valid ELBO requires a stochastic encoder distribution.
+In the flow matching framework, the encoder distribution at any noise level $\tau > 0$ is:
+\begin{equation}
+  q(\vz_\tau \mid \vo) = \mathcal{N}\!\big((1-\tau)\,\vz_{\text{clean}},\; \tau^2 \bm{I}\big),
+  \label{eq:encoder_distribution}
+\end{equation}
+which is a proper Gaussian with variance $\tau^2$.
+We ensure $\tau > 0$ in practice by sampling from a shifted Beta distribution $p(\tau)$ that has zero density at $\tau = 0$.
+This provides the minimum stochasticity needed for the mutual information and KL terms in the information decomposition (\Cref{eq:info_decomp}) to be well-defined and finite, while keeping the flow matching interpolation and velocity targets in their standard form.
+The same argument applies to the action latent via $q(\vb_\tau \mid \va) = \mathcal{N}\!\big((1{-}\tau)\,\vb_{\text{clean}},\; \tau^2 \bm{I}\big)$.
 
 \subsection{History-Conditioned Joint Dynamics Prior}
 \label{sec:ac_prior}
@@ -271,7 +284,7 @@ We replace this with a \emph{joint dynamics prior} that conditions on the full i
 
 The prior jointly predicts velocities for:
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
-  \item \textbf{Current action latent:} $v_\theta^b \approx \vb_t - \vep_b$ --- the velocity from noise to the encoded action, given the history and language goal.
+  \item \textbf{Current action latent:} $v_\theta^b \approx \vb_{t,\text{clean}} - \vep_b$ --- the velocity from noise to the encoded action, given the history and language goal.
   \item \textbf{Future observation latent:} $v_\theta^z \approx \vz_{t+1,\text{clean}} - \vep_z$ --- the velocity from noise to the observation that results from executing the action.
 \end{enumerate}
 Both are generated from noised inputs using the same flow matching process. The clean-sample predictions are recovered as $\hat{\vb}_t = \vb_{t,\tau} + \tau\, v_\theta^b$ and $\hat{\vz}_{t+1} = \vz_{t+1,\tau} + \tau\, v_\theta^z$. The action latent and future observation latent are causally linked: the decoded action $D_\theta^a(\hat{\vb}_t)$ is the action that \emph{causes} the transition $\vo_t \to \vo_{t+1}$. The model must predict both velocities consistently.
@@ -285,7 +298,7 @@ We first recall the original UL derivation, then show how the flow matching prio
 The ideal prior loss in the UL framework upper-bounds the KL divergence between the encoder and prior distributions. For the joint latent $(\vz_{t+1,0}, \vb_{t,0})$, the joint KL decomposes additively (by independence of the deterministic encoders):
 \begin{align}
   &\KL\!\Big[p(\vz_{t+1,0}, \vb_{t,0} \mid \vo_{t+1}, \va_t) \;\Big\|\; p_\theta(\vz_{t+1,0}, \vb_{t,0} \mid \mathcal{H}_t^z)\Big] \nonumber \\
-  &\leq \underbrace{\E_\tau\!\left[w_{\KL}(\tau)\,\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta\|^2\right]}_{\loss_z^{\text{KL}}} + \gamma \cdot \underbrace{\E_\tau\!\left[w_{\KL}(\tau)\,\|\vb_t - \hat{\vb}_\theta\|^2\right]}_{\loss_b^{\text{KL}}} + C_{\KL},
+  &\leq \underbrace{\E_\tau\!\left[w_{\KL}(\tau)\,\|\vz_{t+1,\text{clean}} - \hat{\vz}_\theta\|^2\right]}_{\loss_z^{\text{KL}}} + \gamma \cdot \underbrace{\E_\tau\!\left[w_{\KL}(\tau)\,\|\vb_{t,\text{clean}} - \hat{\vb}_\theta\|^2\right]}_{\loss_b^{\text{KL}}} + C_{\KL},
   \label{eq:ddpm_kl_bound}
 \end{align}
 where $w_{\KL}(\tau) = -\frac{d\lambda(\tau)}{d\tau}\frac{\exp\lambda(\tau)}{2}$ is the KL-optimal weighting (\Cref{eq:ul_prior}), and $C_{\KL}$ collects the boundary KL terms. This is a tight bound when $w = w_{\KL}$.
@@ -319,7 +332,7 @@ We adopt the flow matching velocity prediction loss as our practical prior objec
 \textbf{Action latent loss:}
 \begin{equation}
   \loss_b(\theta) = \E_{\tau \sim p(\tau)}\!\left[
-    \left\|v_\theta^b\!\left(\vb_{t,\tau},\, \vz_{t+1,\tau},\, \mathcal{H}_t^z,\, \tau\right) - (\vb_t - \vep_b)\right\|^2
+    \left\|v_\theta^b\!\left(\vb_{t,\tau},\, \vz_{t+1,\tau},\, \mathcal{H}_t^z,\, \tau\right) - (\vb_{t,\text{clean}} - \vep_b)\right\|^2
   \right].
   \label{eq:action_latent_loss}
 \end{equation}
@@ -333,7 +346,7 @@ where $\gamma$ controls the relative weight of action denoising and both losses 
 
 \subsubsection{Why History-Conditioned Joint Denoising Forces Physics-Grounded Encoding}
 
-The loss is driven by two velocity prediction MSE terms, which are equivalent to weighted clean-sample prediction errors (\Cref{eq:fm_reweight}): (i) the observation latent error $\|v_\theta^z - (\vz_{t+1,\text{clean}} - \vep_z)\|^2 = \frac{1}{\tau^2}\|\vz_{t+1,\text{clean}} - \hat{\vz}_{t+1}\|^2$ and (ii) the action latent error $\|v_\theta^b - (\vb_t - \vep_b)\|^2 = \frac{1}{\tau^2}\|\vb_t - \hat{\vb}_t\|^2$.
+The loss is driven by two velocity prediction MSE terms, which are equivalent to weighted clean-sample prediction errors (\Cref{eq:fm_reweight}): (i) the observation latent error $\|v_\theta^z - (\vz_{t+1,\text{clean}} - \vep_z)\|^2 = \frac{1}{\tau^2}\|\vz_{t+1,\text{clean}} - \hat{\vz}_{t+1}\|^2$ and (ii) the action latent error $\|v_\theta^b - (\vb_{t,\text{clean}} - \vep_b)\|^2 = \frac{1}{\tau^2}\|\vb_{t,\text{clean}} - \hat{\vb}_t\|^2$.
 
 We categorize visual content by whether the dynamics prior can predict it from the latent history $\mathcal{H}_t^z$.
 
@@ -355,14 +368,14 @@ We categorize visual content by whether the dynamics prior can predict it from t
   \item \textbf{Relative gripper-to-target distance:} The decreasing distance between the gripper and the target object is explained by the trajectory of past actions and the language goal.
 \end{enumerate}
 
-\textbf{Predictable but action-irrelevant content} (a subtlety). Not all predictable information is action-relevant. Static background texture (e.g., wood grain on the table) or a clock ticking on the wall are perfectly predictable from history---the prior loss does not penalize them. However, finite latent capacity creates an indirect pressure: channels spent encoding action-irrelevant background are channels unavailable for gripper geometry. The action latent loss $\loss_b$ amplifies this pressure, because the latent transition $\vz_t \to \vz_{t+1}$ must be informative enough to denoise the action $\vb_t$, actively rewarding action-relevant structure over inert background content.
+\textbf{Predictable but action-irrelevant content} (a subtlety). Not all predictable information is action-relevant. Static background texture (e.g., wood grain on the table) or a clock ticking on the wall are perfectly predictable from history---the prior loss does not penalize them. However, finite latent capacity creates an indirect pressure: channels spent encoding action-irrelevant background are channels unavailable for gripper geometry. The action latent loss $\loss_b$ amplifies this pressure, because the latent transition $\vz_t \to \vz_{t+1}$ must be informative enough to denoise the action $\vb_{t,\text{clean}}$, actively rewarding action-relevant structure over inert background content.
 
 \medskip
 
-The \emph{joint} denoising of $(\vb_t, \vz_{t+1})$ creates two complementary pressures that together favor action-relevant content:
+The \emph{joint} denoising of $(\vb_{t,\text{clean}}, \vz_{t+1,\text{clean}})$ creates two complementary pressures that together favor action-relevant content:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
   \item \textbf{Forward dynamics:} The prior must denoise $\vz_{t+1}$---what will happen after executing the action. This requires the observation latent to encode physical geometry that actions causally affect (e.g., gripper-object contact, not table texture).
-  \item \textbf{Inverse dynamics:} The prior must also denoise $\vb_t$---what action caused the transition $\vz_t \to \vz_{t+1}$. This prevents the observation encoder from collapsing to a trivially predictable but uninformative representation (e.g., encoding only static background). The action encoder $A_\theta$ must simultaneously encode actions in a form that the prior can consistently denoise from the latent history.
+  \item \textbf{Inverse dynamics:} The prior must also denoise $\vb_{t,\text{clean}}$---what action caused the transition $\vz_t \to \vz_{t+1}$. This prevents the observation encoder from collapsing to a trivially predictable but uninformative representation (e.g., encoding only static background). The action encoder $A_\theta$ must simultaneously encode actions in a form that the prior can consistently denoise from the latent history.
 \end{itemize}
 
 \textbf{Formal argument.}
@@ -409,10 +422,10 @@ To recover the raw action $\va_t \in \R^{d_a}$ from the denoised action latent $
 \end{equation}
 The action decoder is a 2-layer MLP trained with an auxiliary reconstruction loss:
 \begin{equation}
-  \loss_a^{\text{recon}}(\theta) = \|\va_t - D_\theta^a(\vb_t)\|^2.
+  \loss_a^{\text{recon}}(\theta) = \|\va_t - D_\theta^a(\vb_{t,\text{clean}})\|^2.
   \label{eq:action_recon_loss}
 \end{equation}
-This loss is applied to the clean (non-noised) action latent $\vb_t$ and ensures that the action encoder-decoder pair faithfully represents the action space.
+This loss is applied to the clean action latent $\vb_{t,\text{clean}}$ and ensures that the action encoder-decoder pair faithfully represents the action space.
 
 \subsection{Complete Stage 1 Objective}
 \label{sec:stage1_objective}
@@ -444,17 +457,17 @@ The complete Stage~1 training procedure is given in \Cref{alg:stage1}.
 \STATE Sample window: $(\bm{l}, \vo_{t-H+1:t+1}, \va_{t-H:t}) \sim \mathcal{D}$
 \STATE \textbf{// Encode observations and actions}
 \STATE Encode observations: $\vz_{k,\text{clean}} = E_\theta(\vo_k)$ for $k = t{-}H{+}1, \ldots, t{+}1$
-\STATE Encode actions: $\vb_k = A_\theta(\va_k)$ for $k = t{-}H, \ldots, t$
-\STATE Construct latent history: $\mathcal{H}_t^z = (\bm{l}, \vz_{t-H+1,\text{clean}}, \vb_{t-H}, \ldots, \vb_{t-1}, \vz_{t,\text{clean}})$
+\STATE Encode actions: $\vb_{k,\text{clean}} = A_\theta(\va_k)$ for $k = t{-}H, \ldots, t$
+\STATE Construct latent history: $\mathcal{H}_t^z = (\bm{l}, \vz_{t-H+1,\text{clean}}, \vb_{t-H,\text{clean}}, \ldots, \vb_{t-1,\text{clean}}, \vz_{t,\text{clean}})$
 \STATE \textbf{// Joint dynamics prior loss (flow matching)}
 \STATE Sample $\tau \sim p(\tau)$, $\vep_z \sim \mathcal{N}(\bm{0}, \bm{I})$, $\vep_b \sim \mathcal{N}(\bm{0}, \bm{I})$
 \STATE $\vz_{t+1,\tau} = (1-\tau)\,\vz_{t+1,\text{clean}} + \tau\,\vep_z$ \hfill \COMMENT{flow matching interpolation}
-\STATE $\vb_{t,\tau} = (1-\tau)\,\vb_t + \tau\,\vep_b$
+\STATE $\vb_{t,\tau} = (1-\tau)\,\vb_{t,\text{clean}} + \tau\,\vep_b$
 \STATE $(v_\theta^b, v_\theta^z) = \hat{f}_\theta^{\text{dyn}}(\vb_{t,\tau}, \vz_{t+1,\tau}, \mathcal{H}_t^z, \tau)$ \hfill \COMMENT{velocity prediction}
 \STATE $\loss_z^{\text{latent}} = \|v_\theta^z - (\vz_{t+1,\text{clean}} - \vep_z)\|^2$
-\STATE $\loss_b = \|v_\theta^b - (\vb_t - \vep_b)\|^2$
+\STATE $\loss_b = \|v_\theta^b - (\vb_{t,\text{clean}} - \vep_b)\|^2$
 \STATE \textbf{// Action reconstruction loss}
-\STATE $\loss_a^{\text{recon}} = \|\va_t - D_\theta^a(\vb_t)\|^2$
+\STATE $\loss_a^{\text{recon}} = \|\va_t - D_\theta^a(\vb_{t,\text{clean}})\|^2$
 \STATE \textbf{// Reconstruction loss (deterministic decoder)}
 \STATE $\hat{\vo}_{t+1} = D_\theta(\vz_{t+1,\text{clean}})$
 \STATE $\loss_x = \|\vo_{t+1} - \hat{\vo}_{t+1}\|^2 + \lambda_{\text{perc}} \cdot \loss_{\text{perc}}(\vo_{t+1}, \hat{\vo}_{t+1})$
@@ -474,7 +487,7 @@ Multi-view observations (e.g., three camera views in DROID) are composited into 
 During Stage~1 fine-tuning, the VAE encoder and decoder parameters are updated via LoRA~\citep{hu2022lora} adapters (rank $r = 4$) to adapt the latent space while preserving pretrained visual features.
 
 \textbf{Action encoder $A_\theta$.}
-An embodiment-specific MLP (following DreamZero's \texttt{MultiEmbodimentActionEncoder} design) mapping raw actions $\va_k \in \R^{d_a}$ to action latents $\vb_k \in \R^{d_b}$ with $d_b = 64$.
+An embodiment-specific MLP (following DreamZero's \texttt{MultiEmbodimentActionEncoder} design) mapping raw actions $\va_k \in \R^{d_a}$ to action latents $\vb_{k,\text{clean}} \in \R^{d_b}$ with $d_b = 64$.
 Actions are first normalized to $[-1, 1]$ using per-dataset quantile statistics.
 
 \textbf{Action decoder $D_\theta^a$.}
@@ -491,7 +504,7 @@ The input sequence follows DreamZero's blockwise structure: language tokens, fol
   \big[\text{text\_enc}(\bm{l}),\; \text{patchify}(\vz_{t-H+1}),\; \text{mlp}(\vb_{t-H}),\; \text{mlp}(\bm{s}),\; \ldots,\; \text{patchify}(\vz_{t}),\; \text{mlp}(\vb_{t,\tau}),\; \text{patchify}(\vz_{t+1,\tau})\big].
   \label{eq:prior_input}
 \end{equation}
-The language instruction $\bm{l}$ is encoded by a frozen text encoder (UMT5-XXL). Each observation latent $\vz_{k,\text{clean}}$ is patchified into spatial tokens; each action latent $\vb_k$ and state token are projected through MLPs. The noised targets $\vb_{t,\tau}$ and $\vz_{t+1,\tau}$ are appended. The flow matching timestep $\tau$ is encoded via sinusoidal embeddings and added to the noisy target tokens.
+The language instruction $\bm{l}$ is encoded by a frozen text encoder (UMT5-XXL). Each observation latent $\vz_{k,\text{clean}}$ is patchified into spatial tokens; each action latent $\vb_{k,\text{clean}}$ and state token are projected through MLPs. The noised targets $\vb_{t,\tau}$ and $\vz_{t+1,\tau}$ are appended. The flow matching timestep $\tau$ is encoded via sinusoidal embeddings and added to the noisy target tokens.
 
 The model uses \emph{blockwise causal attention} (following DreamZero): within each block, action tokens can attend to the current and all previous observation tokens, the current state token, and themselves. The model has two output heads that predict velocity fields:
 \begin{itemize}[leftmargin=*,itemsep=2pt]
@@ -515,12 +528,12 @@ This pretrained initialization is critical: training a 1.3B DiT from scratch on 
 Given a trajectory $(\vo_0, \va_0, \vo_1, \va_1, \ldots, \vo_T)$, we extract clean latents for both observations and actions:
 \begin{align}
   \vz_{k,\text{clean}} &= E_\theta(\vo_k), \quad k = 0, 1, \ldots, T, \label{eq:latent_extract} \\
-  \vb_k &= A_\theta(\va_k), \quad k = 0, 1, \ldots, T-1. \label{eq:action_latent_extract}
+  \vb_{k,\text{clean}} &= A_\theta(\va_k), \quad k = 0, 1, \ldots, T-1. \label{eq:action_latent_extract}
 \end{align}
 
 The trajectory in latent space becomes:
 \begin{equation}
-  (\vz_{0,\text{clean}}, \vb_0, \vz_{1,\text{clean}}, \vb_1, \ldots, \vz_{T,\text{clean}}).
+  (\vz_{0,\text{clean}}, \vb_{0,\text{clean}}, \vz_{1,\text{clean}}, \vb_{1,\text{clean}}, \ldots, \vz_{T,\text{clean}}).
   \label{eq:latent_trajectory}
 \end{equation}
 
@@ -531,7 +544,7 @@ The Stage~2 model $\mathcal{T}_\phi$ is a diffusion transformer that takes the l
 \textbf{Chunk definition.}
 The trajectory is divided into chunks of $K$ latent frames. Each chunk $k$ contains interleaved observation and action latents:
 \begin{equation}
-  \mathcal{C}_k = \big(\vz_{kK+1,\text{clean}}, \vb_{kK}, \vz_{kK+2,\text{clean}}, \vb_{kK+1}, \ldots, \vz_{(k+1)K,\text{clean}}, \vb_{(k+1)K-1}\big).
+  \mathcal{C}_k = \big(\vz_{kK+1,\text{clean}}, \vb_{kK,\text{clean}}, \vz_{kK+2,\text{clean}}, \vb_{kK+1,\text{clean}}, \ldots, \vz_{(k+1)K,\text{clean}}, \vb_{(k+1)K-1,\text{clean}}\big).
   \label{eq:chunk}
 \end{equation}
 
@@ -539,13 +552,13 @@ The trajectory is divided into chunks of $K$ latent frames. Each chunk $k$ conta
 For each chunk, we sample noise and construct interpolants for both the observation latents and action latents:
 \begin{align}
   \vz_{kK+j,\tau_k} &= (1-\tau_k)\,\vz_{kK+j,\text{clean}} + \tau_k\,\vep_z^{(j)}, \label{eq:flow_latent} \\
-  \vb_{kK+j-1,\tau_k} &= (1-\tau_k)\,\vb_{kK+j-1} + \tau_k\,\vep_b^{(j)}, \label{eq:flow_action}
+  \vb_{kK+j-1,\tau_k} &= (1-\tau_k)\,\vb_{kK+j-1,\text{clean}} + \tau_k\,\vep_b^{(j)}, \label{eq:flow_action}
 \end{align}
 where $\tau_k \sim \mathcal{U}(0,1)$ is sampled independently per chunk. The model predicts the velocity field:
 \begin{equation}
   \loss_{\text{S2}} = \E\!\left[\frac{1}{K}\sum_{k} w(\tau_k)\,\left\|
     \mathcal{T}_\phi\!\left([\vz_{\tau_k}^k, \vb_{\tau_k}^k]; \mathcal{C}_{<k}, \bm{l}, \bm{s}, \tau_k\right)
-    - [\vz_{\text{clean}}^k - \vep_z^k,\; \vb^k - \vep_b^k]
+    - [\vz_{\text{clean}}^k - \vep_z^k,\; \vb_{\text{clean}}^k - \vep_b^k]
   \right\|^2\right],
   \label{eq:stage2_flow}
 \end{equation}
@@ -557,7 +570,7 @@ During training, the model denoises the current chunk conditioned on \emph{clean
 \subsection{Closed-Loop Inference}
 \label{sec:inference}
 
-During deployment, the model operates in a closed loop. At each step $t$, the history $\mathcal{H}_t^z$ contains the language instruction, past observation latents $\vz_{t-H+1:t,\text{clean}}$, and past action latents $\vb_{t-H:t-1}$:
+During deployment, the model operates in a closed loop. At each step $t$, the history $\mathcal{H}_t^z$ contains the language instruction, past observation latents $\vz_{t-H+1:t,\text{clean}}$, and past action latents $\vb_{t-H:t-1,\text{clean}}$:
 
 \begin{enumerate}[leftmargin=*,itemsep=2pt]
   \item \textbf{Encode:} $\vz_{t,\text{clean}} = E_\theta(\vo_t)$ --- encode the current observation with the frozen observation encoder.
@@ -565,8 +578,8 @@ During deployment, the model operates in a closed loop. At each step $t$, the hi
   \item \textbf{Decode action:} $\hat{\va}_t = D_\theta^a(\hat{\vb}_t)$ --- decode the denoised action latent to a raw action using the frozen action decoder.
   \item \textbf{Execute:} Apply $\hat{\va}_t$ to the robot. This action \emph{causes} the transition to the next state.
   \item \textbf{Observe:} Receive the new observation $\vo_{t+1}$ (the actual result of $\hat{\va}_t$).
-  \item \textbf{Replace:} Compute $\vz_{t+1,\text{clean}} = E_\theta(\vo_{t+1})$ and replace $\hat{\vz}_{t+1,\text{clean}}$ in the KV cache. Compute $\vb_t = A_\theta(\hat{\va}_t)$ for the history. This prevents error accumulation.
-  \item \textbf{Advance:} Shift the history window: $\vb_t$ becomes part of the past action latents, $\vz_{t+1,\text{clean}}$ becomes the latest observation latent. Go to step 2 with $t \leftarrow t+1$.
+  \item \textbf{Replace:} Compute $\vz_{t+1,\text{clean}} = E_\theta(\vo_{t+1})$ and replace $\hat{\vz}_{t+1,\text{clean}}$ in the KV cache. Compute $\vb_{t,\text{clean}} = A_\theta(\hat{\va}_t)$ for the history. This prevents error accumulation.
+  \item \textbf{Advance:} Shift the history window: $\vb_{t,\text{clean}}$ becomes part of the past action latents, $\vz_{t+1,\text{clean}}$ becomes the latest observation latent. Go to step 2 with $t \leftarrow t+1$.
 \end{enumerate}
 
 \subsection{Planning via Latent Rollouts}
@@ -673,7 +686,7 @@ where the proportionality reflects the reweighting from $w_{\KL}$ to $w_{\text{F
 \textbf{Action regularization.}
 The action latent loss $\loss_b$ provides an additional inductive bias via the same flow matching objective. The prior must predict the action velocity from the latent history, so the latent space must encode the \emph{causal effect} of the action on the scene:
 \begin{equation}
-  \loss_b \propto I(\vb_t; \va_t \mid \mathcal{H}_t^z),
+  \loss_b \propto I(\vb_{t,\text{clean}}; \va_t \mid \mathcal{H}_t^z),
   \label{eq:action_info}
 \end{equation}
 ensuring the latent transition $\vz_t \to \vz_{t+1}$ remains informative about the action.
@@ -681,7 +694,7 @@ ensuring the latent transition $\vz_t \to \vz_{t+1}$ remains informative about t
 \textbf{Equilibrium.}
 At convergence, both encoders achieve an optimal trade-off: they maximize history-predictable, action-relevant information while minimizing unpredictable content:
 \begin{equation}
-  \vz_{t+1,\text{clean}}^* = \arg\min_{\vz} \Big[\underbrace{I(\vz; \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{obs.\ rate}} + c_{\text{lf}} \cdot \underbrace{D(\vo_{t+1}, \hat{\vo}_\theta)}_{\text{distortion}} - \gamma \cdot \underbrace{I(\vb_t; \vz \mid \mathcal{H}_t^z)}_{\text{action-obs coupling}}\Big].
+  \vz_{t+1,\text{clean}}^* = \arg\min_{\vz} \Big[\underbrace{I(\vz; \vo_{t+1} \mid \mathcal{H}_t^z)}_{\text{obs.\ rate}} + c_{\text{lf}} \cdot \underbrace{D(\vo_{t+1}, \hat{\vo}_\theta)}_{\text{distortion}} - \gamma \cdot \underbrace{I(\vb_{t,\text{clean}}; \vz \mid \mathcal{H}_t^z)}_{\text{action-obs coupling}}\Big].
   \label{eq:rd_tradeoff}
 \end{equation}
 
@@ -942,7 +955,7 @@ AC-UL (shared, ours)                 & 1.3B & -- & -- & -- \\
 \midrule
 Frozen VAE, no fine-tuning (DreamZero baseline)   & -- & -- \\
 AC-UL, latent only: $\mathcal{H}_t^z \to \vz_{t+1}$ & -- & -- \\
-AC-UL, joint (ours): $\mathcal{H}_t^z \to (\vz_{t+1}, \vb_t)$ & -- & -- \\
+AC-UL, joint (ours): $\mathcal{H}_t^z \to (\vz_{t+1}, \vb_{t,\text{clean}})$ & -- & -- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1311,7 +1324,7 @@ For the flow matching interpolation $\vz_\tau = (1-\tau)\vz_{\text{clean}} + \ta
 This is a reweighted version of the DDPM bound: not tight, but preserving the information bottleneck property (the loss increases monotonically with unpredictable content at every $\tau$).
 
 \textbf{Step 4: Action reconstruction and decoder terms.}
-The action reconstruction uses a Gaussian likelihood bound: $-\log p_\theta(\va_t | \vb_{t,0}) \leq \|\va_t - D_\theta^a(\vb_t)\|^2$.
+The action reconstruction uses a Gaussian likelihood bound: $-\log p_\theta(\va_t | \vb_{t,0}) \leq \|\va_t - D_\theta^a(\vb_{t,\text{clean}})\|^2$.
 The decoder term uses the deterministic reconstruction loss $\loss_x$ as an approximate proxy.
 
 \textbf{Step 5: Complete approximate bound.}
@@ -1338,11 +1351,11 @@ When the prior is optimal ($p_\theta = p^*$), equality holds. The DDPM KL bound 
 \textbf{Role of action latent loss.}
 The action latent loss $\loss_b$ provides an additional constraint via the same flow matching framework. The reweighted KL bound gives:
 \begin{equation}
-  \loss_b \geq I(\vb_t; \va_t \mid \mathcal{H}_t^z).
+  \loss_b \geq I(\vb_{t,\text{clean}}; \va_t \mid \mathcal{H}_t^z).
 \end{equation}
 At optimality, the joint denoising of $(\vb_t, \vz_{t+1})$ ensures that the action latent and observation latent are mutually informative:
 \begin{equation}
-  I(\vb_t; \vz_{t+1,\text{clean}} | \mathcal{H}_t^z) \geq I(\va_t; \vo_{t+1} | \mathcal{H}_t^z) - I(\va_t; \vo_{t+1} | \vz_{t+1,\text{clean}}, \mathcal{H}_t^z).
+  I(\vb_{t,\text{clean}}; \vz_{t+1,\text{clean}} | \mathcal{H}_t^z) \geq I(\va_t; \vo_{t+1} | \mathcal{H}_t^z) - I(\va_t; \vo_{t+1} | \vz_{t+1,\text{clean}}, \mathcal{H}_t^z).
 \end{equation}
 The joint flow matching loss pushes $\vz_{t+1,\text{clean}}$ to be a \emph{sufficient statistic} for the action given the history, meaning $I(\va_t; \vo_{t+1} | \vz_{t+1,\text{clean}}, \mathcal{H}_t^z) \to 0$. This ensures the observation latent captures the full causal effect of the action, while the action encoder learns a representation that is jointly denoised with the observation latent.
 
