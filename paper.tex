@@ -671,6 +671,35 @@ with each KL bounded by the DDPM denoising loss. In our flow matching formulatio
 Instead, the FM loss serves as a \emph{practical proxy} for the KL terms: it shares the same denoising MSE kernel $\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2$ and increases monotonically whenever the encoder encodes unpredictable content, preserving the information bottleneck mechanism (\Cref{prop:fm_kl}).
 The decoder and action decoder terms are bounded by $\loss_x$ and $\loss_a^{\text{recon}}$ respectively.
 
+\subsubsection{Summary of Approximations}
+
+Both the ideal UL objective and the AC-UL objective are weighted integrals of the same per-$\tau$ prediction error $L(\tau) \triangleq \|\vz_{\text{clean}} - \hat{\vz}_\theta(\vz_\tau, \mathcal{H}_t^z, \tau)\|^2$.
+We summarize the three gaps between them:
+
+\begin{center}
+\begin{tabular}{p{2.2cm}p{3.3cm}p{3.3cm}p{4.5cm}}
+\toprule
+\textbf{Component} & \textbf{Ideal UL} & \textbf{AC-UL} & \textbf{Effect} \\
+\midrule
+Prior weighting & $w_{\KL}(\tau) = \frac{1-\tau}{\tau^3}$ (tight KL bound) & $w_{\text{FM}}(\tau) = \frac{1}{\tau^2}$ (flow matching) & Different gradient distribution across $\tau$; same minimizer $\theta^*$ \\[4pt]
+Decoder & Diffusion decoder (tight $-\log p_\theta(\vo|\vz_0)$ bound) & Deterministic MSE + perceptual loss & Approximate reconstruction term \\[4pt]
+Encoder & Stochastic ($\sigma(0){>}0$, finite KL) & Deterministic ($\vz_0 {=} \vz_{\text{clean}}$, KL $= \infty$) & No formal ELBO; FM loss is a practical proxy \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Why the bottleneck is preserved despite these gaps.}
+The key observation is that $L(\tau) \geq 0$ and both $w_{\KL}(\tau), w_{\text{FM}}(\tau) > 0$ for all $\tau \in (0,1)$.
+Three properties follow:
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Same minimizer:} If $\hat{\vz}_\theta$ equals the optimal predictor $\E[\vz_{\text{clean}} \mid \vz_\tau, \mathcal{H}_t^z]$ at every $\tau$, then $L(\tau)$ is minimized simultaneously at all noise levels. Both $\loss^{\KL}$ and $\loss^{\text{FM}}$ reach their minimum at the same $\theta^*$.
+  \item \textbf{Same gradient direction:} At each $\tau$, both losses compute $\nabla_\theta L(\tau)$ scaled by a positive constant. Both push the encoder in the same direction.
+  \item \textbf{Monotonic penalty:} If the encoder encodes unpredictable content, $L(\tau)$ increases at some $\tau$. Since both weightings are positive, both losses increase. The information bottleneck works with \emph{any} positive weighting function.
+\end{enumerate}
+
+The weighting ratio $w_{\text{FM}}(\tau)/w_{\KL}(\tau) = \tau/(1-\tau)$ shows that FM underweights low-noise prediction ($\tau \to 0$, ratio $\to 0$) and overweights high-noise denoising ($\tau \to 1$, ratio $\to \infty$), with equality at $\tau = 0.5$.
+For the information bottleneck, this difference is immaterial: the bottleneck only requires that encoding unpredictable content increases $L(\tau)$ at some $\tau > 0$, which any positive weighting captures.
+
 \subsection{Information-Theoretic Interpretation}
 
 \textbf{Rate (prior loss).}
