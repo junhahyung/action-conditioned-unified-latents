@@ -259,18 +259,13 @@ Since the pretrained Wan2.1 model uses flow matching, we adopt the same linear i
 where $\tau = 0$ corresponds to the clean signal and $\tau = 1$ to pure noise.
 The same time $\tau$ is shared between the observation and action latents, enabling joint denoising.
 
-\textbf{Stochastic encoder for ELBO validity.}
-The ELBO requires a stochastic encoder distribution; a deterministic encoder yields a Dirac delta, making the KL divergence (and hence bitrate) infinite~\citep{heek2025ul}.
-In the original UL framework (DDPM), this is handled by adding fixed Gaussian noise at a minimum noise level $\sigma(0) > 0$.
-In flow matching, no such explicit noise injection is needed---the standard FM interpolation itself provides stochasticity at any $\tau > 0$:
-\begin{equation}
-  q(\vz_\tau \mid \vo) = \mathcal{N}\!\big((1-\tau)\,\vz_{\text{clean}},\; \tau^2 \bm{I}\big),
-  \label{eq:encoder_distribution}
-\end{equation}
-which is a proper Gaussian with variance $\tau^2$.
-Following standard FM practice (e.g., Wan2.1 uses shifted Beta, SD3 uses logit-normal), we sample $\tau$ from a distribution $p(\tau)$ that has zero density at $\tau = 0$, ensuring $\tau > 0$ throughout training.
-This means no modification to the FM procedure is required: the sampling distribution that is already standard in FM implementations provides the minimum stochasticity for the mutual information and KL terms in the information decomposition (\Cref{eq:info_decomp}) to be well-defined.
-The same argument applies to the action latent via $q(\vb_\tau \mid \va) = \mathcal{N}\!\big((1{-}\tau)\,\vb_{\text{clean}},\; \tau^2 \bm{I}\big)$.
+\textbf{Relationship to the ELBO.}
+In the original UL framework (DDPM), a stochastic encoder is obtained by adding fixed Gaussian noise at a minimum noise level $\sigma(0) > 0$, yielding a proper encoder distribution $q(\vz_0 \mid \vo) = \mathcal{N}(\alpha(0)\,\vz_{\text{clean}},\; \sigma(0)^2 \bm{I})$.
+The KL divergence $\KL[q(\vz_0 \mid \vo) \| p_\theta(\vz_0)]$ is then finite and upper-bounded by integrating the denoising loss over all noise levels $\tau$.
+In flow matching, the interpolation gives $\vz_0 = \vz_{\text{clean}}$ at $\tau = 0$---a Dirac delta, not a Gaussian---so the formal KL (and hence the ELBO) is not directly available.
+However, this does not affect the practical training objective: the FM velocity loss penalizes the clean-sample prediction error $\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2$ at every $\tau > 0$, and this error increases whenever the encoder encodes content that the prior cannot predict from the history.
+The information bottleneck mechanism---discarding unpredictable content while retaining history-predictable content (\Cref{eq:info_decomp})---is therefore preserved as an informal but rigorous directional argument, even though the FM loss is not a formal upper bound on the KL.
+We discuss this relaxation and its implications in \Cref{sec:theory}.
 
 \subsection{History-Conditioned Joint Dynamics Prior}
 \label{sec:ac_prior}
@@ -661,17 +656,20 @@ The AC-UL Stage~1 loss provides an approximate upper bound on the negative log-l
   -\log p_\theta(\va_t, \vo_{t+1} \mid \mathcal{H}_t) \;\lessapprox\; \loss_z^{\text{latent}}(\theta) + \gamma \cdot \loss_b(\theta) + c_{\text{lf}} \cdot \loss_x(\theta) + \loss_a^{\text{recon}}(\theta),
   \label{eq:acul_bound}
 \end{equation}
-where $\lessapprox$ denotes that the bound is approximate due to two controlled relaxations: (1)~the flow matching prior loss uses $w_{\text{FM}}$ instead of $w_{\KL}$, and (2)~the deterministic decoder loss $\loss_x$ replaces the diffusion decoder bound.
+where $\lessapprox$ denotes that the bound is approximate due to three relaxations: (1)~the flow matching prior loss uses $w_{\text{FM}}$ instead of $w_{\KL}$, (2)~the deterministic decoder loss $\loss_x$ replaces the diffusion decoder bound, and (3)~the deterministic encoder lacks the minimum noise required for a finite KL, so the formal ELBO is not directly available (see below).
 \end{proposition}
 
-The ELBO decomposition remains exact:
+\textbf{Connection to the ELBO.}
+If one were to use a DDPM noise schedule with minimum noise $\sigma(0) > 0$ (as in the original UL), the ELBO decomposition would be exact:
 \begin{align}
   -\log p_\theta(\va_t, \vo_{t+1} \mid \mathcal{H}_t)
   &\leq \underbrace{-\E\!\Big[\log p_\theta(\vo_{t+1} \mid \vz_{t+1,0})\Big]}_{\text{decoder term}} + \underbrace{\KL\!\Big[q(\vz_{t+1,0}) \;\Big\|\; p_\theta(\vz_{t+1,0} \mid \mathcal{H}_t^z)\Big]}_{\text{obs.\ prior KL}} \nonumber \\
-  &\quad + \underbrace{\KL\!\Big[q(\vb_{t,0}) \;\Big\|\; p_\theta(\vb_{t,0} \mid \mathcal{H}_t^z)\Big]}_{\text{action prior KL}} + \underbrace{-\E\!\Big[\log p_\theta(\va_t \mid \vb_{t,0})\Big]}_{\text{action decoder}}.
+  &\quad + \underbrace{\KL\!\Big[q(\vb_{t,0}) \;\Big\|\; p_\theta(\vb_{t,0} \mid \mathcal{H}_t^z)\Big]}_{\text{action prior KL}} + \underbrace{-\E\!\Big[\log p_\theta(\va_t \mid \vb_{t,0})\Big]}_{\text{action decoder}},
   \label{eq:proof_step}
 \end{align}
-Each KL term is bounded by the corresponding flow matching loss (a reweighted version of the tight DDPM bound, \Cref{prop:fm_kl}). The decoder and action decoder terms are bounded by $\loss_x$ and $\loss_a^{\text{recon}}$ respectively.
+with each KL bounded by the DDPM denoising loss. In our flow matching formulation, the encoder is deterministic at $\tau = 0$ ($\vz_0 = \vz_{\text{clean}}$, a Dirac delta), so the KL terms are formally infinite and the ELBO does not hold as stated.
+Instead, the FM loss serves as a \emph{practical proxy} for the KL terms: it shares the same denoising MSE kernel $\|\vz_{\text{clean}} - \hat{\vz}_\theta\|^2$ and increases monotonically whenever the encoder encodes unpredictable content, preserving the information bottleneck mechanism (\Cref{prop:fm_kl}).
+The decoder and action decoder terms are bounded by $\loss_x$ and $\loss_a^{\text{recon}}$ respectively.
 
 \subsection{Information-Theoretic Interpretation}
 
@@ -1076,7 +1074,7 @@ FLARE adds future latent prediction as an auxiliary loss using frozen SigLIP-2 f
   \item \textbf{Two-stage training:} Stage~1 requires fine-tuning the VAE and DiT (as dynamics prior) simultaneously with the action encoder/decoder, adding training cost over DreamZero's single-stage LoRA fine-tuning.
   \item \textbf{VAE fine-tuning risk:} Aggressive fine-tuning of the pretrained VAE could degrade general visual features. LoRA mitigates this but limits the degree of latent space adaptation.
   \item \textbf{Fixed encoders at Stage~2:} If Stage~1 fine-tuning is suboptimal, Stage~2 inherits these limitations.
-  \item \textbf{Approximate bound:} Two relaxations make the ELBO approximate: (1)~the flow matching prior uses reweighted denoising ($w_{\text{FM}}$ instead of $w_{\KL}$), and (2)~the deterministic Wan decoder replaces the diffusion decoder bound. The information bottleneck property is preserved (\Cref{sec:fm_approx}), but the bound is no longer tight.
+  \item \textbf{No formal ELBO:} Three relaxations prevent a formal variational bound: (1)~the flow matching prior uses reweighted denoising ($w_{\text{FM}}$ instead of $w_{\KL}$), (2)~the deterministic Wan decoder replaces the diffusion decoder bound, and (3)~the deterministic encoder at $\tau{=}0$ makes the KL formally infinite. The information bottleneck mechanism is preserved---the FM loss increases monotonically with unpredictable content (\Cref{sec:fm_approx})---but AC-UL should be understood as a principled training objective inspired by the ELBO, not as a formal bound.
 \end{itemize}
 
 %=====================================================================
@@ -1332,7 +1330,7 @@ The decoder term uses the deterministic reconstruction loss $\loss_x$ as an appr
   -\log p_\theta(\vo_{t+1}, \va_t | \mathcal{H}_t) &\;\lessapprox\; \underbrace{\loss_z^{\text{latent}}(\theta)}_{\text{obs.\ prior (FM)}} + \gamma \cdot \underbrace{\loss_b(\theta)}_{\text{action prior (FM)}} + c_{\text{lf}} \cdot \underbrace{\loss_x(\theta)}_{\text{decoder (approx.)}} + \underbrace{\loss_a^{\text{recon}}(\theta)}_{\text{action recon.}}
   \label{eq:app_total}
 \end{align}
-The approximation stems from two controlled relaxations: (1)~$w_{\text{FM}}$ instead of $w_{\KL}$ for the prior terms, and (2)~deterministic decoder instead of diffusion decoder. Both preserve the information bottleneck mechanism.
+The approximation stems from three relaxations: (1)~$w_{\text{FM}}$ instead of $w_{\KL}$ for the prior terms, (2)~deterministic decoder instead of diffusion decoder, and (3)~deterministic encoder at $\tau{=}0$ (Dirac delta) makes the prior KL formally infinite, so the ELBO does not hold as a bound. The FM loss instead serves as a practical proxy that preserves the information bottleneck mechanism: it increases monotonically with unpredictable content at every $\tau > 0$.
 
 \subsection{Information-Theoretic Analysis}
 \label{app:info_theory}
