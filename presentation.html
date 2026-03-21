@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AC-UL: Action-Conditioned Unified Latents for Robotic World Models</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/reveal.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/theme/black.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root {
+    --r-background-color: #1a1a2e;
+    --r-main-color: #e0e0e0;
+    --r-heading-color: #64ffda;
+    --r-link-color: #82b1ff;
+    --accent: #ff6b9d;
+    --accent2: #c792ea;
+    --accent3: #ffcb6b;
+    --accent4: #89ddff;
+  }
+  .reveal {
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 28px;
+  }
+  .reveal h1 { font-size: 1.8em; color: var(--r-heading-color); font-weight: 700; }
+  .reveal h2 { font-size: 1.4em; color: var(--r-heading-color); font-weight: 600; margin-bottom: 0.5em; }
+  .reveal h3 { font-size: 1.1em; color: var(--accent2); font-weight: 600; }
+  .reveal .slides section { text-align: left; }
+  .reveal .slides section.center-slide { text-align: center; }
+  .reveal ul, .reveal ol { margin-left: 1em; }
+  .reveal li { margin-bottom: 0.4em; line-height: 1.5; }
+  .reveal .small { font-size: 0.75em; }
+  .reveal .tiny { font-size: 0.6em; }
+
+  .highlight { color: var(--accent); font-weight: bold; }
+  .highlight2 { color: var(--accent2); font-weight: bold; }
+  .highlight3 { color: var(--accent3); font-weight: bold; }
+  .highlight4 { color: var(--accent4); font-weight: bold; }
+
+  .box {
+    background: rgba(100, 255, 218, 0.08);
+    border-left: 4px solid var(--r-heading-color);
+    padding: 0.6em 1em;
+    margin: 0.6em 0;
+    border-radius: 4px;
+  }
+  .box-warn {
+    background: rgba(255, 107, 157, 0.08);
+    border-left: 4px solid var(--accent);
+    padding: 0.6em 1em;
+    margin: 0.6em 0;
+    border-radius: 4px;
+  }
+  .box-info {
+    background: rgba(199, 146, 234, 0.08);
+    border-left: 4px solid var(--accent2);
+    padding: 0.6em 1em;
+    margin: 0.6em 0;
+    border-radius: 4px;
+  }
+
+  table.styled {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.75em;
+    margin: 0.5em 0;
+  }
+  table.styled th {
+    background: rgba(100, 255, 218, 0.15);
+    color: var(--r-heading-color);
+    padding: 0.4em 0.6em;
+    border-bottom: 2px solid var(--r-heading-color);
+    text-align: left;
+  }
+  table.styled td {
+    padding: 0.35em 0.6em;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+  }
+  table.styled tr:last-child td { border-bottom: 2px solid var(--r-heading-color); }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5em;
+    align-items: start;
+  }
+  .three-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1em;
+    align-items: start;
+  }
+
+  .eq-box {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(100, 255, 218, 0.3);
+    padding: 0.5em 0.8em;
+    border-radius: 6px;
+    margin: 0.5em 0;
+    text-align: center;
+  }
+
+  .arrow { color: var(--accent3); font-size: 1.3em; }
+
+  .section-title {
+    font-size: 0.6em;
+    color: var(--accent2);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 0.2em;
+  }
+
+  .commentary-header {
+    color: var(--accent) !important;
+  }
+
+  .slide-number { font-size: 0.5em; }
+
+  .katex { font-size: 0.95em; }
+  .katex-display { margin: 0.4em 0; }
+  .katex-display .katex { font-size: 0.9em; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ============================================================ -->
+<!-- SLIDE 1: TITLE -->
+<!-- ============================================================ -->
+<section class="center-slide">
+  <p class="section-title">Robotic World Models</p>
+  <h1 style="font-size:1.5em; line-height:1.3;">Action-Conditioned Unified Latents<br>for Robotic World Models</h1>
+  <p style="color: var(--accent2); margin-top: 1em; font-size: 0.9em;">
+    Extending Unified Latents to joint observation-action dynamics
+  </p>
+  <br>
+  <p class="small" style="color: rgba(255,255,255,0.5);">
+    Building on DreamZero &amp; Unified Latents (UL)<br>
+    Evaluated on DROID &amp; Bridge-v2
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 2: PROBLEM & MOTIVATION -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Motivation</p>
+  <h2>The Latent Space Problem</h2>
+
+  <div class="two-col">
+    <div>
+      <h3>Problem 1: Generic VAE Latents</h3>
+      <p class="small">DreamZero uses a frozen Wan2.1 VAE trained for <em>generic video reconstruction</em></p>
+      <ul class="small">
+        <li>Retains textures, lighting, background clutter</li>
+        <li>Latent space confounds <span class="highlight">physical geometry</span> with <span class="highlight">appearance</span></li>
+        <li>Wastes capacity on action-irrelevant details</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Problem 2: Frozen Features</h3>
+      <p class="small">DINO-WM uses frozen DINOv2 features</p>
+      <ul class="small">
+        <li>Not trained to understand action effects</li>
+        <li>Agnostic to causal structure of manipulation</li>
+        <li>Discards action-relevant geometric info</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="box" style="margin-top: 0.8em;">
+    <strong>Our approach:</strong> Fine-tune a pretrained video model's latent space to encode <em>only</em> the information that the history of interactions can predict &mdash; discarding unpredictable content while retaining action-relevant physics.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 3: BACKGROUND - DREAMZERO -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Background</p>
+  <h2>World Models &amp; DreamZero</h2>
+
+  <p class="small">DreamZero: autoregressive flow-matching transformer for joint video-action generation.</p>
+
+  <div class="eq-box">
+    $$p_\theta(\mathbf{a}_t, \mathbf{o}_{t+1} \mid \mathbf{o}_{t-H+1:t}, \mathbf{a}_{t-H:t-1}, \mathbf{s}_t, \mathbf{l})$$
+  </div>
+
+  <div class="two-col" style="margin-top: 0.5em;">
+    <div>
+      <h3>Architecture</h3>
+      <ul class="small">
+        <li><span class="highlight4">Wan2.1 VAE</span> encodes video to latent tokens</li>
+        <li><span class="highlight4">CausalWanModel</span> (14B params) as DiT backbone</li>
+        <li>LoRA fine-tuned from pretrained image-to-video model</li>
+        <li>Blockwise causal attention with flow matching</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Autoregressive Structure</h3>
+      <ul class="small">
+        <li>At step \(t\): generate \((\mathbf{a}_t, \mathbf{o}_{t+1})\)</li>
+        <li>Action \(\mathbf{a}_t\) <em>causes</em> transition to \(\mathbf{o}_{t+1}\)</li>
+        <li>Closed-loop: predicted frames replaced with ground truth</li>
+        <li>Available at 14B and 1.3B scale</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="box-info" style="margin-top: 0.5em;">
+    <strong>Key limitation:</strong> VAE is frozen &mdash; latent space was never optimized for action-relevant content.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 4: BACKGROUND - UNIFIED LATENTS -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Background</p>
+  <h2>Unified Latents (UL)</h2>
+
+  <p class="small">UL (Heek et al. 2025): jointly train encoder + diffusion prior under the ELBO.</p>
+
+  <div class="eq-box">
+    $$-\log p_\theta(\mathbf{x}) \leq \underbrace{-\mathbb{E}[\log p_\theta(\mathbf{x}|\mathbf{z}_0)]}_{\text{decoder}} + \underbrace{\text{KL}[p_\theta(\mathbf{z}_0|\mathbf{x}) \| p_\theta(\mathbf{z}_0)]}_{\text{prior}}$$
+  </div>
+
+  <div class="two-col" style="margin-top: 0.5em;">
+    <div>
+      <h3>Encoder</h3>
+      <p class="small">Deterministic encoder + fixed noise:</p>
+      <div class="eq-box small">
+        $$\mathbf{z}_0 = \alpha_z(0)\,\mathbf{z}_{\text{clean}} + \sigma_z(0)\,\boldsymbol{\epsilon}_z$$
+      </div>
+      <p class="small">\(\alpha_z(0) \approx 1.0,\; \sigma_z(0) \approx 0.08\)</p>
+    </div>
+    <div>
+      <h3>Prior Loss (KL bound)</h3>
+      <div class="eq-box small">
+        $$\text{KL} \leq \mathbb{E}_\tau\!\left[w_{\text{KL}}(\tau)\,\|\mathbf{z}_{\text{clean}} - \hat{\mathbf{z}}_\theta\|^2\right] + C$$
+      </div>
+      <p class="small">Diffusion prior shapes the latent space by penalizing unpredictable content.</p>
+    </div>
+  </div>
+
+  <div class="box" style="margin-top: 0.5em;">
+    <strong>Key insight from UL:</strong> The prior loss creates an information bottleneck &mdash; encoder content that the prior cannot predict spikes the KL, incentivizing compact, predictable representations.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 5: BACKGROUND - FLOW MATCHING -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Background</p>
+  <h2>Flow Matching</h2>
+
+  <p class="small">Alternative to DDPM: learn a velocity field along linear interpolation paths.</p>
+
+  <div class="two-col">
+    <div>
+      <h3>Linear Interpolation</h3>
+      <div class="eq-box">
+        $$\mathbf{x}_\tau = (1-\tau)\,\mathbf{x} + \tau\,\boldsymbol{\epsilon}$$
+      </div>
+      <p class="small">\(\tau=0\): clean data, \(\tau=1\): pure noise</p>
+
+      <h3 style="margin-top: 0.5em;">Velocity Target</h3>
+      <div class="eq-box">
+        $$\mathcal{L}_{\text{FM}} = \mathbb{E}\!\left[\|v_\theta(\mathbf{x}_\tau, \tau) - (\mathbf{x} - \boldsymbol{\epsilon})\|^2\right]$$
+      </div>
+    </div>
+    <div>
+      <h3>Equivalence to Reweighted Denoising</h3>
+      <div class="eq-box">
+        $$\|v_\theta - (\mathbf{x} - \boldsymbol{\epsilon})\|^2 = \frac{1}{\tau^2}\|\mathbf{x} - \hat{\mathbf{x}}_\theta\|^2$$
+      </div>
+      <p class="small">where \(\hat{\mathbf{x}}_\theta = \mathbf{x}_\tau + \tau\, v_\theta\)</p>
+
+      <h3 style="margin-top: 0.5em;">Weighting Comparison</h3>
+      <table class="styled small">
+        <tr><th>Method</th><th>Weight \(w(\tau)\)</th></tr>
+        <tr><td>KL-optimal (DDPM)</td><td>\(\frac{1-\tau}{\tau^3}\)</td></tr>
+        <tr><td>Flow Matching</td><td>\(\frac{1}{\tau^2}\)</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 6: METHOD OVERVIEW -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Method</p>
+  <h2>AC-UL: Two-Stage Pipeline</h2>
+
+  <div class="two-col">
+    <div>
+      <div class="box">
+        <h3>Stage 1: Fine-tune Encoder + Prior</h3>
+        <ul class="small">
+          <li>Initialize from pretrained Wan2.1 VAE</li>
+          <li>Add learned <span class="highlight">action encoder</span> \(A_\theta\) &amp; <span class="highlight">action decoder</span> \(D^a_\theta\)</li>
+          <li>Replace unconditional prior with <span class="highlight2">history-conditioned joint dynamics prior</span></li>
+          <li>Fine-tune VAE + DiT with LoRA (rank 4)</li>
+          <li>Joint flow matching for obs + action latents</li>
+          <li class="highlight3">500K training steps</li>
+        </ul>
+      </div>
+    </div>
+    <div>
+      <div class="box-info">
+        <h3>Stage 2: Autoregressive DiT</h3>
+        <ul class="small">
+          <li><span class="highlight">Freeze</span> all Stage 1 encoders/decoders</li>
+          <li>Train CausalWanModel (1.3B) on frozen AC-UL latents</li>
+          <li>LoRA fine-tuned from pretrained Wan2.1 weights</li>
+          <li>Joint video-action generation in latent space</li>
+          <li>Closed-loop inference with KV cache</li>
+          <li class="highlight3">Enables planning via latent rollouts</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <p style="text-align: center; margin-top: 0.8em;">
+    <span class="highlight4">Stage 1</span>: Physics-grounded vocabulary
+    <span class="arrow">&rarr;</span>
+    <span class="highlight4">Stage 2</span>: Autoregressive generation &amp; planning
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 7: STAGE 1 - ENCODING & PRIOR -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Method &mdash; Stage 1</p>
+  <h2>Latent Encoding &amp; Joint Dynamics Prior</h2>
+
+  <div class="two-col">
+    <div>
+      <h3>Encoders</h3>
+      <div class="eq-box small">
+        $$\mathbf{z}_{k,\text{clean}} = E_\theta(\mathbf{o}_k) \in \mathbb{R}^{h \times w \times c}$$
+      </div>
+      <div class="eq-box small">
+        $$\mathbf{b}_{k,\text{clean}} = A_\theta(\mathbf{a}_k) \in \mathbb{R}^{d_b}$$
+      </div>
+      <p class="small">Latent history:</p>
+      <div class="eq-box small">
+        $$\mathcal{H}_t^z = (\mathbf{l}, \mathbf{s}_t, \mathbf{z}_{t-H+1}, \mathbf{b}_{t-H}, \ldots, \mathbf{b}_{t-1}, \mathbf{z}_t)$$
+      </div>
+    </div>
+    <div>
+      <h3>Joint Dynamics Prior</h3>
+      <p class="small">Central contribution: replace unconditional prior with joint prediction:</p>
+      <div class="eq-box small">
+        $$(v_\theta^b,\; v_\theta^z) = \hat{f}_\theta^{\text{dyn}}(\mathbf{b}_{t,\tau},\; \mathbf{z}_{t+1,\tau},\; \mathcal{H}_t^z,\; \tau)$$
+      </div>
+      <ul class="small">
+        <li>\(v_\theta^b\): velocity for <span class="highlight">current action</span> (inverse dynamics)</li>
+        <li>\(v_\theta^z\): velocity for <span class="highlight2">future observation</span> (forward dynamics)</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 0.5em;">Forward Process (Flow Matching Interpolation)</h3>
+  <div class="eq-box">
+    $$\mathbf{z}_{t+1,\tau} = (1-\tau)\,\mathbf{z}_{t+1,\text{clean}} + \tau\,\boldsymbol{\epsilon}_z \qquad \mathbf{b}_{t,\tau} = (1-\tau)\,\mathbf{b}_{t,\text{clean}} + \tau\,\boldsymbol{\epsilon}_b$$
+  </div>
+  <p class="small" style="text-align:center;">Same \(\tau\) shared between obs and action &mdash; enabling joint denoising.</p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 8: INFORMATION BOTTLENECK -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Method &mdash; Stage 1</p>
+  <h2>Information Bottleneck: Four-Way Pressure</h2>
+
+  <div class="three-col small">
+    <div class="box">
+      <h3 style="font-size:0.95em;">Prior Loss \(\mathcal{L}_z^{\text{latent}}\)</h3>
+      <p><strong>Penalizes</strong> unpredictable content</p>
+      <p>If encoder preserves info the prior can't predict from history &rarr; obs MSE spikes</p>
+      <p style="color: var(--accent);">Pressure: DISCARD</p>
+    </div>
+    <div class="box-info">
+      <h3 style="font-size:0.95em;">Decoder Loss \(c_{\text{lf}} \cdot \mathcal{L}_x\)</h3>
+      <p><strong>Rewards</strong> information useful for reconstruction</p>
+      <p>Ensures latent retains fine geometric detail</p>
+      <p style="color: var(--accent2);">Pressure: RETAIN</p>
+    </div>
+    <div class="box-warn">
+      <h3 style="font-size:0.95em;">Action Loss \(\gamma \cdot \mathcal{L}_b\)</h3>
+      <p><strong>Prioritizes</strong> action-relevant structure</p>
+      <p>Inverse dynamics: latent transition must support action denoising</p>
+      <p style="color: var(--accent3);">Pressure: ACTION-RELEVANT</p>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 0.6em;">Information Decomposition</h3>
+  <div class="eq-box">
+    $$I(\mathbf{z}_{t+1}; \mathbf{o}_{t+1}) = \underbrace{I(\mathbf{z}_{t+1}; \mathbf{o}_{t+1} \mid \mathcal{H}_t^z)}_{\text{unpredictable (penalized)}} + \underbrace{I(\mathbf{z}_{t+1}; \mathcal{H}_t^z)}_{\text{history-predictable (free)}}$$
+  </div>
+
+  <h3 style="margin-top: 0.4em;">Rate-Distortion Equilibrium</h3>
+  <div class="eq-box small">
+    $$\mathbf{z}^* = \arg\min_{\mathbf{z}} \Big[\underbrace{I(\mathbf{z}; \mathbf{o}_{t+1} \mid \mathcal{H}_t^z)}_{\text{rate}} + c_{\text{lf}} \cdot \underbrace{D(\mathbf{o}_{t+1}, \hat{\mathbf{o}}_\theta)}_{\text{distortion}} - \gamma \cdot \underbrace{I(\mathbf{b}_t; \mathbf{z} \mid \mathcal{H}_t^z)}_{\text{action coupling}}\Big]$$
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 9: COMPLETE OBJECTIVE -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Method &mdash; Stage 1</p>
+  <h2>Complete Stage 1 Objective</h2>
+
+  <div class="eq-box" style="font-size: 1.1em;">
+    $$\mathcal{L}_{\text{S1}} = \underbrace{\mathcal{L}_z^{\text{latent}} + \gamma \cdot \mathcal{L}_b}_{\text{joint dynamics prior (FM)}} + c_{\text{lf}} \cdot \underbrace{\mathcal{L}_x}_{\text{decoder}} + \underbrace{\mathcal{L}_a^{\text{recon}}}_{\text{action recon}}$$
+  </div>
+
+  <table class="styled" style="margin-top: 0.8em;">
+    <tr>
+      <th>Term</th>
+      <th>Formula</th>
+      <th>Role</th>
+    </tr>
+    <tr>
+      <td>\(\mathcal{L}_z^{\text{latent}}\)</td>
+      <td class="small">\(\mathbb{E}_\tau[\|v_\theta^z - (\mathbf{z}_{\text{clean}} - \boldsymbol{\epsilon}_z)\|^2]\)</td>
+      <td class="small">Obs latent velocity prediction (forward dynamics)</td>
+    </tr>
+    <tr>
+      <td>\(\gamma \cdot \mathcal{L}_b\)</td>
+      <td class="small">\(\gamma \cdot \mathbb{E}_\tau[\|v_\theta^b - (\mathbf{b}_{\text{clean}} - \boldsymbol{\epsilon}_b)\|^2]\)</td>
+      <td class="small">Action latent velocity prediction (inverse dynamics)</td>
+    </tr>
+    <tr>
+      <td>\(c_{\text{lf}} \cdot \mathcal{L}_x\)</td>
+      <td class="small">\(c_{\text{lf}} \cdot (\|\mathbf{o} - \hat{\mathbf{o}}\|^2 + \lambda_{\text{perc}} \cdot \mathcal{L}_{\text{perc}})\)</td>
+      <td class="small">Reconstruction via pretrained deterministic decoder</td>
+    </tr>
+    <tr>
+      <td>\(\mathcal{L}_a^{\text{recon}}\)</td>
+      <td class="small">\(\|\mathbf{a}_t - D^a_\theta(\mathbf{b}_{t,\text{clean}})\|^2\)</td>
+      <td class="small">Action encoder-decoder faithfulness</td>
+    </tr>
+  </table>
+
+  <div class="box" style="margin-top: 0.6em;">
+    <strong>Interpretation:</strong> Prior loss discards unpredictable content. Decoder loss retains reconstruction-useful content. Action loss prioritizes action-relevant structure. Together: physics-grounded latent space.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 10: STAGE 2 -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Method &mdash; Stage 2</p>
+  <h2>Autoregressive Generation &amp; Planning</h2>
+
+  <div class="two-col">
+    <div>
+      <h3>Closed-Loop Inference</h3>
+      <ol class="small">
+        <li><span class="highlight4">Encode</span>: \(\mathbf{z}_{t} = E_\theta(\mathbf{o}_t)\)</li>
+        <li><span class="highlight4">Generate</span>: \((\hat{\mathbf{b}}_t, \hat{\mathbf{z}}_{t+1}) = \mathcal{T}_\phi(\mathcal{H}_t^z)\)</li>
+        <li><span class="highlight4">Decode action</span>: \(\hat{\mathbf{a}}_t = D^a_\theta(\hat{\mathbf{b}}_t)\)</li>
+        <li><span class="highlight4">Execute</span>: Apply \(\hat{\mathbf{a}}_t\) to robot</li>
+        <li><span class="highlight4">Observe</span>: Receive \(\mathbf{o}_{t+1}\)</li>
+        <li><span class="highlight4">Replace</span>: Update KV cache with true obs</li>
+        <li>Advance \(t \leftarrow t+1\), repeat</li>
+      </ol>
+    </div>
+    <div>
+      <h3>Planning via Latent Rollouts</h3>
+      <ol class="small">
+        <li>Encode goal: \(\mathbf{z}_g = E_\theta(\mathbf{o}_g)\)</li>
+        <li>Generate <span class="highlight3">N=256</span> open-loop rollouts:
+          <div class="eq-box small" style="margin: 0.3em 0;">
+            $$(\hat{\mathbf{b}}_t, \hat{\mathbf{z}}_{t+1}) \to \cdots \to (\hat{\mathbf{b}}_{t+P-1}, \hat{\mathbf{z}}_{t+P})$$
+          </div>
+        </li>
+        <li>Score: \(d = \|\hat{\mathbf{z}}_{t+P} - \mathbf{z}_g\|^2\)</li>
+        <li>Select best trajectory, execute first K actions</li>
+        <li>Replan (receding horizon)</li>
+      </ol>
+      <div class="box small" style="margin-top: 0.3em;">
+        Planning in <em>physics-grounded</em> latent space &mdash; distance measures progress in physical state, not appearance.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 11: THEORY - FM ≈ KL -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Theory</p>
+  <h2>Flow Matching Approximates KL Bound</h2>
+
+  <div class="box">
+    <h3>Proposition 1: Velocity-to-Clean Equivalence</h3>
+    <div class="eq-box">
+      $$\|v_\theta(\mathbf{z}_\tau, \tau) - (\mathbf{z}_{\text{clean}} - \boldsymbol{\epsilon})\|^2 = \frac{1}{\tau^2}\,\|\mathbf{z}_{\text{clean}} - \hat{\mathbf{z}}_\theta\|^2$$
+    </div>
+    <p class="small">FM velocity MSE = reweighted clean-sample prediction MSE</p>
+  </div>
+
+  <div class="box-info" style="margin-top: 0.5em;">
+    <h3>Proposition 2: Same Minimizer, Different Weighting</h3>
+    <div class="two-col small">
+      <div>
+        <p>\(\mathcal{L}^{\text{KL}} = \mathbb{E}_\tau[w_{\text{KL}}(\tau) \cdot \|\mathbf{z}_{\text{clean}} - \hat{\mathbf{z}}_\theta\|^2]\)</p>
+        <p>where \(w_{\text{KL}}(\tau) = \frac{1-\tau}{\tau^3}\)</p>
+      </div>
+      <div>
+        <p>\(\mathcal{L}^{\text{FM}} = \mathbb{E}_\tau[w_{\text{FM}}(\tau) \cdot \|\mathbf{z}_{\text{clean}} - \hat{\mathbf{z}}_\theta\|^2]\)</p>
+        <p>where \(w_{\text{FM}}(\tau) = \frac{1}{\tau^2}\)</p>
+      </div>
+    </div>
+    <p class="small">Ratio: \(w_{\text{FM}}/w_{\text{KL}} = \tau/(1-\tau)\) &mdash; bounded, same minimizer \(\theta^*\)</p>
+  </div>
+
+  <div class="box-warn" style="margin-top: 0.5em;">
+    <h3>Why the Bottleneck is Preserved</h3>
+    <ul class="small">
+      <li><strong>Same minimizer:</strong> Both reach minimum at the same \(\theta^*\)</li>
+      <li><strong>Same gradient direction:</strong> Both compute \(\nabla_\theta L(\tau)\) scaled by positive constant</li>
+      <li><strong>Monotonic penalty:</strong> Unpredictable content increases \(L(\tau)\) &rarr; increases loss under <em>any</em> positive weight</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 12: THEORY - APPROXIMATE BOUND -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Theory</p>
+  <h2>AC-UL as Approximate Variational Bound</h2>
+
+  <div class="eq-box">
+    $$-\log p_\theta(\mathbf{a}_t, \mathbf{o}_{t+1} \mid \mathcal{H}_t) \;\lessapprox\; \mathcal{L}_z^{\text{latent}} + \gamma \cdot \mathcal{L}_b + c_{\text{lf}} \cdot \mathcal{L}_x + \mathcal{L}_a^{\text{recon}}$$
+  </div>
+
+  <h3 style="margin-top: 0.5em;">Three Relaxations from Ideal UL</h3>
+  <table class="styled">
+    <tr>
+      <th>Component</th>
+      <th>Ideal UL</th>
+      <th>AC-UL</th>
+      <th>Effect</th>
+    </tr>
+    <tr>
+      <td class="small">Prior weighting</td>
+      <td class="small">\(w_{\text{KL}}(\tau) = \frac{1-\tau}{\tau^3}\)</td>
+      <td class="small">\(w_{\text{FM}}(\tau) = \frac{1}{\tau^2}\)</td>
+      <td class="small">Different gradient distribution; same minimizer</td>
+    </tr>
+    <tr>
+      <td class="small">Decoder</td>
+      <td class="small">Diffusion decoder (tight bound)</td>
+      <td class="small">Deterministic MSE + perceptual</td>
+      <td class="small">Approximate reconstruction term</td>
+    </tr>
+    <tr>
+      <td class="small">Encoder</td>
+      <td class="small">Stochastic (\(\sigma(0)>0\), finite KL)</td>
+      <td class="small">Deterministic (\(\mathbf{z}_0 = \mathbf{z}_{\text{clean}}\), KL = \(\infty\))</td>
+      <td class="small">No formal ELBO; FM is practical proxy</td>
+    </tr>
+  </table>
+
+  <div class="box" style="margin-top: 0.5em;">
+    <p class="small"><strong>Despite these gaps:</strong> The information bottleneck is preserved because all three changes maintain the property that encoding unpredictable content increases the loss. The bottleneck requires only that \(L(\tau) \geq 0\) and \(w(\tau) > 0\) &mdash; both hold for FM.</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 13: EXPERIMENTS - SETUP -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Experiments</p>
+  <h2>Experimental Setup</h2>
+
+  <div class="two-col">
+    <div>
+      <h3>Datasets</h3>
+      <div class="box small">
+        <strong>DROID</strong> (primary)<br>
+        76K trajectories, Franka Panda<br>
+        3-view RGB (wrist + 2 exterior)<br>
+        8-DoF actions + gripper, 564 scenes
+      </div>
+      <div class="box-info small" style="margin-top: 0.4em;">
+        <strong>Bridge-v2</strong> (transfer)<br>
+        60K trajectories, WidowX robot<br>
+        7-DoF actions, kitchen tasks
+      </div>
+    </div>
+    <div>
+      <h3>Core Comparison</h3>
+      <table class="styled">
+        <tr><th>Model</th><th>Params</th><th>Latent Space</th></tr>
+        <tr><td class="small">DreamZero</td><td class="small">14B</td><td class="small">Frozen Wan VAE</td></tr>
+        <tr><td class="small">DreamZero</td><td class="small">1.3B</td><td class="small">Frozen Wan VAE</td></tr>
+        <tr><td class="small highlight">AC-UL (ours)</td><td class="small highlight">1.3B</td><td class="small highlight">Fine-tuned AC-UL</td></tr>
+      </table>
+      <p class="small" style="margin-top: 0.5em;">
+        <span class="highlight3">1.3B vs 1.3B:</span> Isolates latent space effect<br>
+        <span class="highlight3">1.3B AC-UL vs 14B:</span> Better latents vs. more params
+      </p>
+
+      <h3 style="margin-top: 0.5em;">Other Baselines</h3>
+      <ul class="small">
+        <li>DINO-WM (frozen DINOv2)</li>
+        <li>FLARE (future latent alignment)</li>
+        <li>TD-MPC2 (decoder-free latent dynamics)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 14: EXPERIMENTS - MAIN RESULTS -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Experiments</p>
+  <h2>Main Results</h2>
+
+  <h3>Four Evaluation Settings</h3>
+  <div class="two-col">
+    <div>
+      <div class="box small">
+        <strong>1. Closed-Loop Planning</strong><br>
+        Best-of-256 latent rollouts, goal-conditioned<br>
+        Tasks: Pick, Place, Stack, Pour
+      </div>
+      <div class="box-info small" style="margin-top: 0.4em;">
+        <strong>2. Imitation Learning</strong><br>
+        Joint world-action modeling, closed-loop execution<br>
+        + Data efficiency comparison (10%&ndash;100% data)
+      </div>
+    </div>
+    <div>
+      <div class="box small">
+        <strong>3. Video-Action Prediction</strong><br>
+        Multi-step prediction quality (FVD, LPIPS, SSIM, PSNR)<br>
+        Latent &amp; action MSE over horizon (1, 5, 10, 20 steps)
+      </div>
+      <div class="box-info small" style="margin-top: 0.4em;">
+        <strong>4. Cross-Embodiment Transfer</strong><br>
+        Stage 1 on DROID+Bridge-v2 combined<br>
+        Stage 2 on target embodiment
+      </div>
+    </div>
+  </div>
+
+  <div class="box-warn" style="margin-top: 0.6em; text-align: center;">
+    <h3>Key Finding</h3>
+    <p style="font-size: 1.1em;">
+      <span class="highlight3">1.3B AC-UL</span> matches or outperforms <span class="highlight">14B DreamZero</span><br>
+      <span class="small">10x smaller model, better latent representations &gt; raw model scale</span>
+    </p>
+  </div>
+
+  <p class="small" style="text-align: center; color: rgba(255,255,255,0.5); margin-top: 0.3em;">
+    Note: Experimental tables contain placeholder values (--) as experiments are ongoing.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 15: ABLATIONS -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Experiments</p>
+  <h2>Ablation Studies</h2>
+
+  <div class="two-col">
+    <div>
+      <h3>History-Conditioned Joint Prior</h3>
+      <table class="styled small">
+        <tr><th>Prior Variant</th><th>Effect</th></tr>
+        <tr><td>Frozen VAE (DreamZero)</td><td>Baseline</td></tr>
+        <tr><td>AC-UL, obs only: \(\mathcal{H}_t^z \to \mathbf{z}_{t+1}\)</td><td>Partial improvement</td></tr>
+        <tr><td class="highlight">AC-UL, joint (ours)</td><td class="highlight">Best performance</td></tr>
+      </table>
+
+      <h3 style="margin-top: 0.6em;">Action Loss Weight \(\gamma\)</h3>
+      <table class="styled small">
+        <tr><th>\(\gamma\)</th><th>Observation</th></tr>
+        <tr><td>0.0</td><td>No inverse dynamics signal</td></tr>
+        <tr><td>0.1 &ndash; 0.5</td><td>Moderate coupling</td></tr>
+        <tr><td class="highlight">1.0</td><td class="highlight">Sweet spot</td></tr>
+        <tr><td>2.0</td><td>Over-constrains encoder</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>History Length \(H\)</h3>
+      <table class="styled small">
+        <tr><th>\(H\)</th><th>Observation</th></tr>
+        <tr><td>1 (Markov)</td><td>No temporal context</td></tr>
+        <tr><td>2</td><td>Minimal history</td></tr>
+        <tr><td class="highlight">4</td><td class="highlight">Good balance</td></tr>
+        <tr><td>8</td><td>Diminishing returns</td></tr>
+      </table>
+
+      <h3 style="margin-top: 0.6em;">Loss Factor \(c_{\text{lf}}\)</h3>
+      <table class="styled small">
+        <tr><th>\(c_{\text{lf}}\)</th><th>Trade-off</th></tr>
+        <tr><td>1.3</td><td>More compression, less recon</td></tr>
+        <tr><td class="highlight">1.5</td><td class="highlight">Balanced</td></tr>
+        <tr><td>1.7</td><td>Less compression, more recon</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="box small" style="margin-top: 0.5em;">
+    <strong>Also ablated:</strong> Timestep distribution (shifted Beta), AC-UL latents vs. pixel space vs. DINO features with same 1.3B DiT &mdash; AC-UL latents consistently best.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 16: ANALYSIS -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Analysis</p>
+  <h2>What Do AC-UL Latents Encode?</h2>
+
+  <div class="two-col">
+    <div>
+      <h3>Predictable Content (Retained)</h3>
+      <ul class="small">
+        <li><span class="highlight4">Action-caused geometry:</span> gripper closing on target after "pick up red block"</li>
+        <li><span class="highlight4">Object state changes:</span> drawer opening after pull action</li>
+        <li><span class="highlight4">Relative gripper-to-target distance:</span> explained by action trajectory + language goal</li>
+      </ul>
+
+      <h3 style="margin-top: 0.6em;">vs. DreamZero</h3>
+      <ul class="small">
+        <li>Same Wan architecture &amp; autoregressive paradigm</li>
+        <li>DreamZero (14B): frozen VAE retains everything</li>
+        <li>AC-UL (1.3B): fine-tuned VAE retains only physics</li>
+        <li class="highlight3">Better latents compensate for 10x fewer params</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Unpredictable Content (Discarded)</h3>
+      <ul class="small">
+        <li><span class="highlight">Camera auto-exposure:</span> brightness shifts have no causal link to actions</li>
+        <li><span class="highlight">Specular reflections:</span> high-freq appearance hard to predict</li>
+        <li><span class="highlight">External disturbances:</span> another person's hand not explained by action history</li>
+      </ul>
+
+      <h3 style="margin-top: 0.6em;">vs. FLARE</h3>
+      <ul class="small">
+        <li>FLARE targets = frozen SigLIP-2 (general semantics)</li>
+        <li>AC-UL targets = <em>learned</em> action-predictable physics</li>
+        <li>FLARE: actions only, future features auxiliary</li>
+        <li>AC-UL: jointly generates observations + actions</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="box" style="margin-top: 0.5em; text-align: center;">
+    <strong>Key insight:</strong> Latent space adaptation &gt; model scale. Representation quality outweighs raw parameters.
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 17: ARCHITECTURE DETAILS -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title">Implementation</p>
+  <h2>Architecture &amp; DreamZero Codebase</h2>
+
+  <div class="two-col">
+    <div>
+      <h3>Components</h3>
+      <table class="styled small">
+        <tr><th>Component</th><th>Details</th></tr>
+        <tr><td>Obs Encoder \(E_\theta\)</td><td>Wan2.1 VAE, 16ch, 8x downsample, LoRA r=4</td></tr>
+        <tr><td>Obs Decoder \(D_\theta\)</td><td>Pretrained Wan2.1 VAE decoder (deterministic)</td></tr>
+        <tr><td>Action Encoder \(A_\theta\)</td><td>Embodiment-specific MLP, \(d_b=64\)</td></tr>
+        <tr><td>Action Decoder \(D^a_\theta\)</td><td>2-layer MLP</td></tr>
+        <tr><td>Dynamics Prior</td><td>CausalWanModel 1.3B, LoRA r=4</td></tr>
+        <tr><td>Text Encoder</td><td>Frozen UMT5-XXL</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>DreamZero Implementation</h3>
+      <ul class="small">
+        <li><strong>Backbone:</strong> WAN Flow Matching DiT with blockwise causal attention</li>
+        <li><strong>Training:</strong> DeepSpeed ZeRO-2, AdamW (lr=1e-4)</li>
+        <li><strong>Noise:</strong> Beta(1.5, 1.0) distribution</li>
+        <li><strong>Inference:</strong> UniPC 25-step solver</li>
+        <li><strong>Multi-embodiment:</strong> DROID, AgiBot, YAM, GR1, MECKA</li>
+        <li><strong>Data:</strong> LeRobot format, sharded loading</li>
+      </ul>
+
+      <h3 style="margin-top: 0.4em;">Supported Embodiments</h3>
+      <ul class="small">
+        <li>OXE_DROID: 3-view Franka Panda</li>
+        <li>AGIBOT: 4-view humanoid</li>
+        <li>WidowX: Bridge-v2</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 18: CRITICAL COMMENTARY 1 -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title" style="color: var(--accent);">Critical Commentary</p>
+  <h2 class="commentary-header">Theoretical Concerns</h2>
+
+  <div class="box-warn">
+    <h3>1. No Formal ELBO &mdash; The "\(\lessapprox\)" Problem</h3>
+    <p class="small">The paper acknowledges three relaxations that prevent a formal variational bound. This is more serious than presented:</p>
+    <ul class="small">
+      <li><strong>Deterministic encoder makes KL = \(\infty\):</strong> At \(\tau=0\), the encoder produces a Dirac delta. The KL between a Dirac and any Gaussian is infinite. This isn't just "approximate" &mdash; <span class="highlight">the ELBO literally does not exist</span> in this formulation. The "\(\lessapprox\)" notation obscures this.</li>
+      <li><strong>The "information bottleneck" argument is heuristic:</strong> The paper argues that FM loss increases with unpredictable content (true), but this is a <em>directional</em> argument, not a bound. Without a formal bound, there's no guarantee the bottleneck is tight enough to produce meaningfully compressed representations.</li>
+      <li><strong>FM weighting emphasizes wrong regime:</strong> \(w_{\text{FM}}/w_{\text{KL}} = \tau/(1-\tau) \to \infty\) as \(\tau \to 1\). FM over-weights high-noise (pure denoising) and under-weights low-noise (fine structure). For action-relevant geometry, low-noise precision may matter more.</li>
+    </ul>
+  </div>
+
+  <div class="box-warn" style="margin-top: 0.5em;">
+    <h3>2. Proposition 3 is Not Really a Proposition</h3>
+    <p class="small">It states an <em>approximate</em> bound with "\(\lessapprox\)". In formal mathematics, a proposition should state something precise. This is more honestly described as a <em>motivation</em> or <em>analogy</em> with the ELBO, not a mathematical result. The proof reduces to "if we used DDPM + stochastic encoder, it would be exact" &mdash; but AC-UL uses neither.</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 19: CRITICAL COMMENTARY 2 -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title" style="color: var(--accent);">Critical Commentary</p>
+  <h2 class="commentary-header">Methodological Limitations</h2>
+
+  <div class="box-warn">
+    <h3>3. Two-Stage Training: Complexity vs. Elegance</h3>
+    <ul class="small">
+      <li>Stage 1 requires jointly training VAE + DiT + action encoder/decoder. Stage 2 re-trains the DiT on frozen latents. This is <span class="highlight">2x the training compute</span> of single-stage DreamZero.</li>
+      <li>The frozen encoder at Stage 2 means <strong>any mistakes in Stage 1 are permanent</strong>. If the encoder converges to a suboptimal trade-off (e.g., too aggressive compression), Stage 2 cannot recover.</li>
+      <li>End-to-end training would be more principled but is claimed to be unstable. The paper doesn't explore this sufficiently.</li>
+    </ul>
+  </div>
+
+  <div class="box-warn" style="margin-top: 0.4em;">
+    <h3>4. Experimental Tables are Empty</h3>
+    <ul class="small">
+      <li>All experimental tables contain placeholder values ("--"). <span class="highlight">No actual results are reported.</span> The claim "1.3B AC-UL matches 14B DreamZero" is stated in the abstract and introduction but <strong>not supported by data</strong>.</li>
+      <li>This makes the paper currently a theoretical/methodological proposal, not an empirical contribution.</li>
+    </ul>
+  </div>
+
+  <div class="box-warn" style="margin-top: 0.4em;">
+    <h3>5. VAE Fine-tuning Risks</h3>
+    <ul class="small">
+      <li>LoRA rank 4 on the VAE is extremely low. It's unclear if this provides enough expressiveness to meaningfully restructure the latent space, or if the changes are too subtle to matter.</li>
+      <li>No analysis of <em>what changes</em> in the VAE latent space after fine-tuning (e.g., latent space visualization, CKA similarity before/after).</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 20: CRITICAL COMMENTARY 3 -->
+<!-- ============================================================ -->
+<section>
+  <p class="section-title" style="color: var(--accent);">Critical Commentary</p>
+  <h2 class="commentary-header">Suggestions for Improvement</h2>
+
+  <div class="two-col">
+    <div>
+      <div class="box">
+        <h3>Theoretical Fixes</h3>
+        <ul class="small">
+          <li><strong>Add minimum noise \(\sigma(0)>0\):</strong> Even a small amount (as in original UL) would make the KL finite and the ELBO formally valid. This is a simple fix that costs almost nothing.</li>
+          <li><strong>Drop "Proposition 3":</strong> Replace with honest framing: "AC-UL is inspired by the ELBO but is not a formal bound." The information bottleneck argument stands on its own without pretending to be a bound.</li>
+          <li><strong>Analyze the FM/KL gap empirically:</strong> Measure how much the objectives actually differ during training. If \(w_{\text{FM}} \approx w_{\text{KL}}\) in the relevant range, show it.</li>
+        </ul>
+      </div>
+    </div>
+    <div>
+      <div class="box-info">
+        <h3>Experimental Improvements</h3>
+        <ul class="small">
+          <li><strong>Run the experiments:</strong> The paper's value hinges entirely on whether 1.3B AC-UL actually matches 14B DreamZero. Without results, the contribution is speculative.</li>
+          <li><strong>Latent space analysis:</strong> Visualize what changes. Show t-SNE/UMAP of latents before/after AC-UL, colored by action or task. Show Jacobian sensitivity maps.</li>
+          <li><strong>Single-stage ablation:</strong> Try end-to-end training and report why it fails (if it does). The two-stage design needs justification beyond "it's easier."</li>
+          <li><strong>Scaling analysis:</strong> Does AC-UL's advantage diminish at larger model scales? Test 5B AC-UL vs. 14B DreamZero.</li>
+          <li><strong>More benchmarks:</strong> DROID and Bridge-v2 are both tabletop manipulation. Test on CALVIN, RLBench, or locomotion to show generality.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SLIDE 21: SUMMARY -->
+<!-- ============================================================ -->
+<section class="center-slide">
+  <p class="section-title">Summary</p>
+  <h2>Takeaways &amp; Future Directions</h2>
+
+  <div style="text-align: left; max-width: 800px; margin: 0 auto;">
+    <div class="box">
+      <h3>What AC-UL Proposes</h3>
+      <ul class="small">
+        <li>Apply UL variational objective to fine-tune video model latent spaces for action-relevant content</li>
+        <li>History-conditioned joint dynamics prior creates information bottleneck</li>
+        <li>Four-way pressure (prior + decoder + action + action recon) yields physics-grounded representations</li>
+        <li>Two-stage pipeline: adapt latent space, then train autoregressive model on adapted latents</li>
+      </ul>
+    </div>
+
+    <div class="box-info" style="margin-top: 0.5em;">
+      <h3>Core Hypothesis</h3>
+      <p>Representation quality &gt; model scale: <span class="highlight3">1.3B with better latents</span> can match <span class="highlight">14B with generic latents</span>.</p>
+    </div>
+
+    <div class="box" style="margin-top: 0.5em;">
+      <h3>Future Directions</h3>
+      <ul class="small">
+        <li>Scale Stage 2 to foundation-model sizes with AC-UL vocabulary</li>
+        <li>Incorporate action-free video for broader pretraining of the prior</li>
+        <li>Extend to multi-step chunk-wise generation for real-time control</li>
+        <li>Formal stochastic encoder variant with valid ELBO</li>
+        <li>Cross-domain transfer beyond tabletop manipulation</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+</div><!-- .slides -->
+</div><!-- .reveal -->
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/reveal.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  slideNumber: true,
+  width: 1200,
+  height: 700,
+  margin: 0.06,
+  transition: 'slide',
+  backgroundTransition: 'fade',
+  center: false,
+  controls: true,
+  progress: true,
+});
+
+// Render KaTeX after Reveal loads
+document.addEventListener('DOMContentLoaded', function() {
+  // Wait for KaTeX to load
+  var checkKatex = setInterval(function() {
+    if (typeof renderMathInElement !== 'undefined') {
+      clearInterval(checkKatex);
+      renderMathInElement(document.body, {
+        delimiters: [
+          {left: '$$', right: '$$', display: true},
+          {left: '\\[', right: '\\]', display: true},
+          {left: '$', right: '$', display: false},
+          {left: '\\(', right: '\\)', display: false}
+        ],
+        throwOnError: false,
+        trust: true
+      });
+    }
+  }, 100);
+});
+</script>
+</body>
+</html>
